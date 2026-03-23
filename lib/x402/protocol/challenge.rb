@@ -63,7 +63,7 @@ module X402
     end
 
     def to_canonical_json
-      CanonicalJson.encode(to_h)
+      to_h.to_json_c14n
     end
 
     def sha256_hex

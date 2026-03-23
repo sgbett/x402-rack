@@ -2,7 +2,7 @@
 
 require "rack"
 
-RSpec.describe X402::Verifier do
+RSpec.describe X402::Verification::Pipeline do
   # Build a minimal valid BSV transaction that:
   # - Spends the nonce UTXO as an input
   # - Has an output paying to the payee locking script

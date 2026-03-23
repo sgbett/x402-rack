@@ -57,7 +57,7 @@ module X402
       challenge = Challenge.from_header(challenge_header)
 
       # Run verification pipeline
-      Verifier.verify!(proof, challenge: challenge, rack_request: request, route: route, config: config)
+      Verification::Pipeline.verify!(proof, challenge: challenge, rack_request: request, route: route, config: config)
 
       # Verification passed — forward to app
       @app.call(env)

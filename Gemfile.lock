@@ -4,6 +4,7 @@ PATH
     x402 (0.1.0)
       base64
       bsv-sdk
+      json-canonicalization (~> 1.0)
       rack (>= 2.0)
 
 PATH
@@ -21,6 +22,7 @@ GEM
     bigdecimal (4.0.1)
     diff-lcs (1.6.2)
     json (2.19.2)
+    json-canonicalization (1.0.0)
     json-schema (6.2.0)
       addressable (~> 2.8)
       bigdecimal (>= 3.1, < 5)
