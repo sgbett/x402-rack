@@ -22,7 +22,7 @@ Two x402 ecosystems exist with different conventions:
 - Strong request binding (method, path, query, headers hash, body hash)
 - Single-chain, single-scheme
 
-**Our position**: Implement merkleworks first for BSV compatibility. Add our own BSV-native scheme. Structure the middleware so adding Coinbase-compatible gateways is possible without architectural changes. Coinbase will gatekeep BSV from their ecosystem — our conformance is about making it easy for others to integrate BSV as a supported network.
+**Our position**: Our PayGateway implements the Coinbase v2 header spec (`Payment-Required` / `Payment-Signature` / `Payment-Response`) with BSV as the settlement network. This makes BSV a first-class citizen in the broader x402 ecosystem — any Coinbase-compatible server or client can interoperate with us. We also support merkleworks via a separate ProofGateway that uses the `X402-*` headers. The `X402-*` headers are merkleworks' territory; we speak the standard x402 v2 language for our own scheme.
 
 ## Component Boundaries
 
@@ -110,11 +110,37 @@ Using `0xC1` (`SIGHASH_ALL | ANYONECANPAY`) would commit to ALL outputs, breakin
 
 | Scheme | Challenge header | Proof header | Receipt header |
 |--------|-----------------|--------------|----------------|
+| BSV-pay (ours) | `Payment-Required` | `Payment-Signature` | `Payment-Response` |
 | BSV-proof (merkleworks) | `X402-Challenge` | `X402-Proof` | — |
-| BSV-pay (ours) | `X402-Challenge` | `X402-Pay` | TBD |
-| Coinbase v2 (future) | `Payment-Required` | `Payment-Signature` | `Payment-Response` |
 
-A server can send **multiple challenge headers** simultaneously. The client picks the one it can satisfy. Payment content negotiation.
+Our PayGateway uses the Coinbase v2 headers — the standard x402 ecosystem language. The ProofGateway uses the merkleworks `X402-*` headers. A server running both sends both:
+
+```
+HTTP/1.1 402 Payment Required
+Payment-Required: <base64(v2 PaymentRequired JSON with BSV in accepts)>
+X402-Challenge: <base64url(merkleworks challenge JSON)>
+```
+
+The `Payment-Required` challenge follows the Coinbase v2 structure:
+
+```json
+{
+  "x402Version": 2,
+  "resource": { "url": "/api/expensive" },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "bsv:main",
+      "amount": "100",
+      "asset": "BSV",
+      "payTo": "1A1zP1...",
+      "maxTimeoutSeconds": 60
+    }
+  ]
+}
+```
+
+BSV appears in the `accepts` array alongside any other chains. A multi-chain server could offer USDC on Base and BSV in the same `Payment-Required` header.
 
 ### Gateway interface
 
@@ -210,26 +236,57 @@ Implements the merkleworks protocol. Client broadcasts, server checks mempool.
 
 ### BSV-pay (our BSV-native scheme)
 
-Server broadcasts via ARC. Simpler flow, no nonces needed.
+Server broadcasts via ARC. Simpler flow, no nonces needed. Uses Coinbase v2 header spec.
 
-**Headers**: `X402-Challenge` / `X402-Pay`
+**Headers**: `Payment-Required` / `Payment-Signature` / `Payment-Response`
 
-**Challenge**: partial tx template with payment output only (no nonce). The client adds funding inputs, signs, and hands the completed tx to the server.
-
-**Proof payload** (our canonical JSON):
+**Challenge** (Coinbase v2 `PaymentRequired` structure):
 ```json
 {
-  "rawtx": "<hex-encoded raw transaction>",
-  "txid": "<double-SHA256 of raw tx bytes>"
+  "x402Version": 2,
+  "resource": { "url": "/api/expensive" },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "bsv:main",
+      "amount": "100",
+      "asset": "BSV",
+      "payTo": "1A1zP1...",
+      "maxTimeoutSeconds": 60
+    }
+  ]
+}
+```
+
+Includes a partial tx template with payment output only (no nonce). The client adds funding inputs, signs, and hands the completed tx to the server.
+
+**Payment payload** (Coinbase v2 `PaymentPayload` structure with BSV-specific payload):
+```json
+{
+  "x402Version": 2,
+  "accepted": {
+    "scheme": "exact",
+    "network": "bsv:main",
+    "amount": "100",
+    "asset": "BSV",
+    "payTo": "1A1zP1...",
+    "maxTimeoutSeconds": 60
+  },
+  "payload": {
+    "rawtx": "<hex-encoded raw transaction>",
+    "txid": "<double-SHA256 of raw tx bytes>"
+  }
 }
 ```
 
 **Settlement flow**:
-1. Decode proof JSON
-2. Verify payment output (amount + payee) from the raw tx
-3. Broadcast to ARC
-4. ARC 200 → return success result
-5. ARC error → raise VerificationError (relay ARC response to client)
+1. Decode `Payment-Signature` header (base64 → PaymentPayload JSON)
+2. Verify `accepted` matches a valid route
+3. Decode raw tx from `payload.rawtx`
+4. Verify payment output (amount + payee)
+5. Broadcast to ARC
+6. ARC 200 → return `Payment-Response` header with settlement result
+7. ARC error → raise VerificationError (relay ARC response to client)
 
 **No nonces needed**: ARC is the replay gate. Each tx can only be accepted once.
 
@@ -249,8 +306,10 @@ See: https://docs.bsvblockchain.org/important-concepts/details/spv/broadcasting
 
 | | BSV-proof (merkleworks) | BSV-pay (ours) |
 |---|---|---|
-| Challenge header | `X402-Challenge` | `X402-Challenge` |
-| Proof header | `X402-Proof` | `X402-Pay` |
+| Header spec | Merkleworks `X402-*` | Coinbase v2 `Payment-*` |
+| Challenge header | `X402-Challenge` | `Payment-Required` |
+| Proof header | `X402-Proof` | `Payment-Signature` |
+| Receipt header | — | `Payment-Response` |
 | Template contains | Nonce input (signed 0xC3) + payment output | Payment output only |
 | Who broadcasts | Client | Server (via ARC) |
 | Nonce needed | Yes (challenge binding) | No (ARC is replay gate) |
@@ -258,6 +317,7 @@ See: https://docs.bsvblockchain.org/important-concepts/details/spv/broadcasting
 | Settlement check | Mempool visibility query | ARC broadcast response |
 | Treasury needed | Yes (nonce provision + signing) | No |
 | Minimum infrastructure | Treasury + ARC | ARC only |
+| Ecosystem compatibility | Merkleworks BSV clients | Any x402 v2 client |
 
 ## File Changes
 
@@ -301,9 +361,8 @@ See: https://docs.bsvblockchain.org/important-concepts/details/spv/broadcasting
 
 ## Future Considerations (deferred)
 
-- **Coinbase facilitator pattern**: verify-then-settle two-step. Could be faked for BSV if needed.
+- **Coinbase facilitator pattern**: verify-then-settle two-step. Our PayGateway could support this — verify tx structure first, serve resource, broadcast to ARC after.
 - **Extensions mechanism**: gas sponsoring, request binding as extension, custom auth schemes.
-- **`Payment-Required` accepts array**: BSV alongside EVM chains in a single header.
+- **Multi-chain accepts array**: BSV alongside EVM chains in the same `Payment-Required` header — now possible since we use the v2 structure.
 - **Runar contract AST**: client sends ContractNode AST, gateway compiles via runar. A future scheme on the same dispatcher.
-- **Multipart form data**: for POST requests with large transaction payloads if header size becomes an issue.
-- **Header size**: standard BSV payment txs are ~400-600 bytes base64-encoded, well within 8KB+ server limits.
+- **Header size**: standard BSV payment txs are ~400-600 bytes base64-encoded, well within 8KB+ server limits. Multipart form data for POST requests if this becomes an issue.

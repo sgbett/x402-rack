@@ -90,19 +90,21 @@ This plan defines the component parts and their boundaries. It is deliberately n
 
 **Gateway types identified so far**:
 
+### BSV PayGateway (our BSV-native scheme — Coinbase v2 headers)
+- **Challenge**: `PaymentRequired` JSON with BSV in `accepts` array + partial tx template (payment output only)
+- **Settlement**: verify tx structure, broadcast via ARC, return `Payment-Response`
+- **Headers**: `Payment-Required` / `Payment-Signature` / `Payment-Response`
+- **Needs**: ARC only
+- **Identity**: not required
+- **Ecosystem**: standard x402 v2 — interoperable with any Coinbase-compatible client
+
 ### BSV ProofGateway (merkleworks x402)
 - **Challenge**: pre-signed partial tx template (nonce at input 0 with 0xC3, payment output at output 0) + merkleworks challenge JSON (binding, expiry)
 - **Settlement**: verify tx structure, check mempool via ARC
 - **Headers**: `X402-Challenge` / `X402-Proof`
 - **Needs**: treasury (nonce key) + ARC
 - **Identity**: not required
-
-### BSV PayGateway (our BSV-native scheme)
-- **Challenge**: partial tx template (payment output only)
-- **Settlement**: verify tx structure, broadcast via ARC
-- **Headers**: `X402-Challenge` / `X402-Pay`
-- **Needs**: ARC only
-- **Identity**: not required
+- **Ecosystem**: merkleworks BSV-specific
 
 ### BRC-105 Gateway (future)
 - **Challenge**: derivation prefix + satoshis required (multiple `x-bsv-payment-*` headers)
@@ -110,13 +112,7 @@ This plan defines the component parts and their boundaries. It is deliberately n
 - **Headers**: `x-bsv-payment-*` / `x-bsv-payment`
 - **Needs**: BRC-100 wallet
 - **Identity**: REQUIRED (reads `env['brc103.identity_key']` for derivation)
-
-### Coinbase v2 Gateway (future)
-- **Challenge**: `PaymentRequired` JSON with `accepts` array
-- **Settlement**: verify signature, settle via facilitator (or locally)
-- **Headers**: `Payment-Required` / `Payment-Signature` / `Payment-Response`
-- **Needs**: facilitator service (or local chain access)
-- **Identity**: not required (Coinbase uses wallet signatures, not session auth)
+- **Ecosystem**: BSV Association BRC standard
 
 ## Server-Side Wallet (`bsv-wallet` gem)
 
@@ -209,11 +205,11 @@ X402 Middleware
     │  No proof header → issue challenges
     │  Passes env (including identity) to each gateway
     │
-    ├── ProofGateway.challenge_headers(request, route)
-    │   Returns X402-Challenge header (ignores identity — doesn't need it)
-    │
     ├── PayGateway.challenge_headers(request, route)
-    │   Returns X402-Challenge header (ignores identity)
+    │   Returns Payment-Required header (v2 JSON with BSV in accepts)
+    │
+    ├── ProofGateway.challenge_headers(request, route)
+    │   Returns X402-Challenge header (merkleworks format)
     │
     ├── BRC105Gateway.challenge_headers(request, route)
     │   Reads env['brc103.identity_key']
@@ -224,7 +220,7 @@ X402 Middleware
 402 Response with all non-empty challenge headers
 ```
 
-A client with a BRC-100 wallet and BRC-103 auth gets all three challenge options. A client with just a BSV wallet gets ProofGateway and PayGateway challenges. The client picks whichever it supports.
+A client with a BRC-100 wallet and BRC-103 auth gets all three challenge options. A standard x402 v2 client gets the `Payment-Required` header and can pay with BSV. A merkleworks-specific client uses `X402-Challenge`. The client picks whichever it supports.
 
 ## How Payment Flows Through the Stack
 
@@ -240,20 +236,20 @@ X402 Middleware
     │  Reads route config → protected, costs 100 sats
     │  Detects proof header
     │
+    ├── Has Payment-Signature? → dispatch to PayGateway.settle!()
+    │   Gateway verifies tx, broadcasts via ARC
+    │   Returns: allow + settlement result + Payment-Response header
+    │
     ├── Has X402-Proof? → dispatch to ProofGateway.settle!()
     │   Gateway verifies tx, checks mempool via ARC
     │   Returns: allow + settlement result
-    │
-    ├── Has X402-Pay? → dispatch to PayGateway.settle!()
-    │   Gateway verifies tx, broadcasts via ARC
-    │   Returns: allow + settlement result (incl. ARC response)
     │
     ├── Has x-bsv-payment? → dispatch to BRC105Gateway.settle!()
     │   Gateway verifies derivation + tx via BRC-100 wallet
     │   Returns: allow + settlement result
     │
     ▼
-Allow → forward to application
+Allow → forward to application (with receipt headers if provided)
 Deny → return error to client
 ```
 
