@@ -130,7 +130,7 @@ The `Payment-Required` challenge follows the Coinbase v2 structure. The `extra` 
   "accepts": [
     {
       "scheme": "exact",
-      "network": "bsv:main",
+      "network": "bsv:mainnet",
       "amount": "100",
       "asset": "BSV",
       "payTo": "1A1zP1...",
@@ -267,7 +267,7 @@ A basic client constructs a tx from `payTo` + `amount`. A smart client extends `
   "x402Version": 2,
   "accepted": {
     "scheme": "exact",
-    "network": "bsv:main",
+    "network": "bsv:mainnet",
     "amount": "100",
     "asset": "BSV",
     "payTo": "1A1zP1...",
