@@ -30,10 +30,17 @@ This plan defines the component parts and their boundaries. It is deliberately n
 │ Proof  │  │  Pay   │ │ Gateway │
 └───┬────┘  └───┬────┘ └────┬────┘
     │           │           │
-┌───┴────┐  ┌───┴───┐  ┌────┴────┐
-│Treasury│  │  ARC  │  │ BRC-100 │  External services
-│+ ARC   │  │       │  │ Wallet  │
-└────────┘  └───────┘  └─────────┘
+    └───────────┼───────────┘
+                │
+         ┌──────┴───────┐
+         │  BSV Wallet  │  Server-side wallet (BRC-100 interface)
+         │  (bsv-wallet │  Manages keys, UTXOs, signing
+         │   gem)       │  via baskets: nonces, fees, revenue
+         └──────┬───────┘
+                │
+         ┌──────┴───────┐
+         │   bsv-sdk    │  Primitives — keys, txs, scripts, ARC
+         └──────────────┘
 ```
 
 ## Layer 1: Identity (BRC-103/104)
@@ -111,28 +118,79 @@ This plan defines the component parts and their boundaries. It is deliberately n
 - **Needs**: facilitator service (or local chain access)
 - **Identity**: not required (Coinbase uses wallet signatures, not session auth)
 
+## Server-Side Wallet (`bsv-wallet` gem)
+
+### One wallet, multiple roles
+
+The treasury, delegator, and payment receipt functions are not separate services — they are **roles** a single wallet plays, distinguished by which baskets and keys they use.
+
+| Role | Basket | Key | Operations |
+|------|--------|-----|------------|
+| Treasury | `x402-nonces` | Nonce key | `createAction` (mint nonces, sign templates), `listOutputs` |
+| Delegator | `x402-fees` | Fee key | `signAction` (sign fee inputs), `listOutputs` |
+| Payment receipt | `x402-revenue` | Payee key | `internalizeAction` (accept payments), `listOutputs` |
+
+### BRC-100 as the API boundary
+
+The wallet exposes a BRC-100 interface (or the subset we need). Gateways talk to the wallet exclusively through these methods. They never touch keys directly. The wallet is the security boundary.
+
+**BRC-100 methods we need** (subset of the full 28+ method spec):
+- `createAction` — construct and sign transactions (nonce minting, template signing)
+- `signAction` — sign previously created transactions (fee input signing)
+- `internalizeAction` — accept incoming transactions (payment receipt)
+- `listOutputs` — query UTXOs by basket (find nonces, fee UTXOs, revenue)
+- `getPublicKey` — derive keys (BRC-29 derivations for BRC-105, nonce keys)
+
+### Where it lives
+
+The `bsv-ruby-sdk` repo (`sgbett/bsv-ruby-sdk`) already has:
+- A monorepo pattern with multiple gemspecs (`bsv-sdk`, `bsv-attest`)
+- A basic wallet at `lib/bsv/wallet/wallet.rb` (single-key, UTXO funding + signing)
+- Full key management including BIP-32 HD derivation
+- Transaction construction with BIP-143 sighash (FORKID)
+- ARC provider
+- BEEF serialisation
+
+The `bsv-wallet` gem adds a third gemspec to this repo:
+- BRC-100 interface layer over the existing primitives
+- Basket-based UTXO tracking (nonces, fees, revenue)
+- Multi-key support
+- Builds on the existing `BSV::Wallet::Wallet` as the internal engine
+
+### Deployment options
+
+The BRC-100 interface works regardless of deployment:
+
+1. **In-process** — `require 'bsv-wallet'`, gateway calls wallet methods directly. Simplest. Keys in the same process.
+2. **Local service** — wallet runs as a separate process, gateways call via HTTP. Process isolation.
+3. **Remote service** — wallet on a different machine. Network boundary. Strongest isolation.
+
+Same interface, different transports. Start with in-process, separate later if needed.
+
+### Separation from middleware
+
+The wallet gem has a strict public API (BRC-100 methods only). The `x402-rack` gem depends on `bsv-wallet` but only through this interface. The middleware itself (`X402::Middleware`) never talks to the wallet — only gateways do.
+
+```
+x402-rack (no keys, no wallet dependency)
+  └── X402::Middleware
+  └── X402::BSV::ProofGateway ──→ BSV::Wallet (BRC-100 API)
+  └── X402::BSV::PayGateway ────→ BSV::Wallet (BRC-100 API, for ARC only)
+```
+
 ## External Services
 
 ### ARC (BSV transaction processor)
 - Broadcasts transactions and returns acceptance/rejection
 - Queries mempool visibility for already-broadcast txs
-- Used by: ProofGateway (mempool queries), PayGateway (broadcast)
+- Used by: wallet (via `bsv-sdk` ARC provider)
 - API: https://docs.bsvblockchain.org/important-concepts/details/spv/broadcasting
 
-### Treasury
-- Holds nonce key, mints 1-sat nonce UTXOs, signs partial tx templates with 0xC3
-- Used by: ProofGateway only
-- Could be: external service (via `wallet_url`) or local key in the gateway
-
-### Delegator
+### Delegator (client-side concern)
 - Adds fee inputs to client-constructed partial txs, signs only its fee inputs
 - Used by: clients (not servers). The server stack never talks to the delegator.
 - Separate service entirely — could be operated by the gateway operator or a third party
-
-### BRC-100 Wallet
-- Standard BSV wallet API (createAction, internalizeAction, listOutputs, etc.)
-- Used by: BRC-105 Gateway (server-side tx validation), clients (tx construction)
-- Implementations: BSV Browser, other CWI-compliant wallets
+- Could itself be powered by a `bsv-wallet` instance in the "fees" role
 
 ## How Identity Flows Through the Stack
 
@@ -205,22 +263,33 @@ Deny → return error to client
 |-----------|:---:|:---:|:---:|:---:|
 | BRC-104 Auth Middleware | Yes | Signatures only | Yes — its job | Session keys |
 | X402 Middleware | Yes | No | Passes through | No |
-| ProofGateway | Headers only | Yes | No | Nonce key |
-| PayGateway | Headers only | Yes | No | No |
-| BRC-105 Gateway | Headers only | Yes | Yes (reads from env) | Derivation key |
-| Treasury | No | Yes | No | Nonce key |
+| ProofGateway | Headers only | Via wallet | No | No — wallet holds them |
+| PayGateway | Headers only | Via wallet | No | No — wallet holds them |
+| BRC-105 Gateway | Headers only | Via wallet | Yes (reads from env) | No — wallet holds them |
+| BSV Wallet | No | Yes — its job | No | Yes — the security boundary |
 | ARC | No | Yes | No | No |
-| Delegator | No | Yes | No | Fee keys |
+| Delegator | No | Via wallet | No | No — wallet holds them |
 | Client | Yes | Yes | Optionally | Wallet keys |
 
 ## Gem Boundaries
 
-| Gem | Contains |
-|-----|---------|
-| `x402-rack` | X402::Middleware (gatekeeper), gateway interface, X402::BSV::ProofGateway, X402::BSV::PayGateway |
-| `brc104-rack` (future, separate) | BRC-104 auth middleware |
-| `brc105-gateway` (future, separate or in x402-rack) | X402::BSV::BRC105Gateway |
-| `bsv-x402` (npm, separate repo) | Client-side fetch wrapper, CWI integration |
+| Gem | Repo | Contains |
+|-----|------|---------|
+| `bsv-sdk` | `sgbett/bsv-ruby-sdk` | Primitives — keys, transactions, scripts, ARC provider |
+| `bsv-wallet` | `sgbett/bsv-ruby-sdk` | BRC-100 wallet interface, basket UTXO tracking, multi-key management. Depends on `bsv-sdk`. |
+| `x402-rack` | `sgbett/x402-rack` | X402::Middleware (gatekeeper), gateway interface, X402::BSV::ProofGateway, X402::BSV::PayGateway. Gateways depend on `bsv-wallet`. |
+| `brc104-rack` (future) | Separate | BRC-104 auth middleware |
+| `bsv-x402` (npm) | `sgbett/bsv-x402` | Client-side fetch wrapper, CWI integration |
+
+### Dependency chain
+
+```
+x402-rack
+  └── bsv-wallet (BRC-100 interface only)
+        └── bsv-sdk (primitives)
+```
+
+The middleware itself has no dependency on `bsv-wallet` or `bsv-sdk`. Only the gateway classes do. A pure middleware deployment (dispatching to remote gateways) wouldn't need the BSV gems at all.
 
 ## Design Principles
 
