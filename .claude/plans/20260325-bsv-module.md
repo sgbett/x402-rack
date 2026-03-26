@@ -285,13 +285,25 @@ A basic client constructs a tx from `payTo` + `amount`. A smart client extends `
 2. Verify `accepted` matches a valid route
 3. Decode raw tx from `payload.rawtx`
 4. Verify payment output (amount + payee)
-5. Broadcast to ARC
-6. ARC 200 → return `Payment-Response` header with settlement result
-7. ARC error → raise VerificationError (relay ARC response to client)
+5. Verify OP_RETURN request binding (if present or if strict mode)
+6. Broadcast to ARC
+7. ARC 200 → return `Payment-Response` header with settlement result
+8. ARC error → raise VerificationError (relay ARC response to client)
 
 **No nonces needed**: ARC is the replay gate. Each tx can only be accepted once.
 
-**No request binding needed**: ARC acceptance proves freshness.
+**Request binding via OP_RETURN**: The partial tx template includes an OP_RETURN output binding the payment to the specific request:
+
+```
+Output 0: payment (amount to payee)
+Output 1: OP_RETURN <SHA256(method + path + query)>
+```
+
+The gateway adds this when building the template. At settlement time, the gateway recomputes the hash from the current request and verifies it matches the OP_RETURN in the submitted tx. This prevents a client from taking a template generated for one URL and submitting it to a different endpoint on the same server.
+
+The binding is in the template itself — the client can't modify it because they only append inputs and outputs at higher indices. Cheap (~30 bytes), on-chain, and verifiable.
+
+For basic clients that ignore `extra.partialTx` and construct a tx from scratch, binding isn't enforced (they won't include the OP_RETURN). The gateway can choose to require it or not via config — strict mode rejects txs without the binding output, permissive mode accepts either.
 
 **Requires**: ARC only. No treasury, no nonce provision.
 
@@ -311,10 +323,10 @@ See: https://docs.bsvblockchain.org/important-concepts/details/spv/broadcasting
 | Challenge header | `X402-Challenge` | `Payment-Required` |
 | Proof header | `X402-Proof` | `Payment-Signature` |
 | Receipt header | — | `Payment-Response` |
-| Template contains | Nonce input (signed 0xC3) + payment output | Payment output only |
+| Template contains | Nonce input (signed 0xC3) + payment output | Payment output + OP_RETURN binding |
 | Who broadcasts | Client | Server (via ARC) |
 | Nonce needed | Yes (challenge binding) | No (ARC is replay gate) |
-| Request binding | Yes (in challenge) | No (ARC acceptance = freshness) |
+| Request binding | Yes (in challenge metadata) | Yes (OP_RETURN in template) |
 | Settlement check | Mempool visibility query | ARC broadcast response |
 | Treasury needed | Yes (nonce provision + signing) | No |
 | Minimum infrastructure | Treasury + ARC | ARC only |
