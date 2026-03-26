@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require_relative "../../../lib/x402/protocol/base64url"
+require_relative "../../../lib/x402/protocol/proof"
+
 RSpec.describe X402::Proof do
   describe ".from_header" do
     let(:proof_data) do
