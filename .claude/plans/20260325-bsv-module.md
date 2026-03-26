@@ -2,7 +2,7 @@
 
 ## Context
 
-The codebase has BSV-specific logic in `X402::Verification::SettlementChecks` that needs to move behind an `X402::BSV` boundary. Through analysis of both the merkleworks reference implementation and the Coinbase x402 ecosystem, the middleware's role has clarified: it is a **pure dispatcher** with no blockchain knowledge. Gateways are pluggable backends that handle chain-specific settlement.
+The codebase has BSV-specific logic in `X402::Verification::SettlementChecks` that needs to move behind an `X402::BSV` boundary. Through analysis of the merkleworks reference implementation (including Profile B settlement flow), the Coinbase x402 ecosystem, and direct discussion with Rui at merkleworks, the architecture has clarified into clean component boundaries.
 
 ### Ecosystem landscape
 
@@ -24,19 +24,89 @@ Two x402 ecosystems exist with different conventions:
 
 **Our position**: Implement merkleworks first for BSV compatibility. Add our own BSV-native scheme. Structure the middleware so adding Coinbase-compatible gateways is possible without architectural changes. Coinbase will gatekeep BSV from their ecosystem — our conformance is about making it easy for others to integrate BSV as a supported network.
 
-## Architecture: Middleware as Dispatcher
+## Component Boundaries
 
-### The middleware knows nothing about blockchains
+### Gatekeeper (`X402::Middleware`)
 
-The Rack middleware is a protocol-level dispatcher. It:
+The Rack middleware. A pure dispatcher with no blockchain knowledge. It:
 
 1. **On request**: polls each configured gateway for challenge headers, returns all of them in the 402 response
 2. **On proof**: checks which proof/payment header the client sent, dispatches to the matching gateway
 3. **On result**: the gateway returns allow/deny — the middleware serves or rejects accordingly
 
-The middleware never decodes transactions, checks mempool, broadcasts, or interacts with any blockchain network. It manages HTTP headers, route matching, and dispatch. Everything else is the gateway's job.
+The gatekeeper **MUST NOT sign transactions or hold private keys** (Invariant A-2 from the merkleworks spec). It manages HTTP headers, route matching, and dispatch. Everything else is the gateway's job.
 
-### Multi-protocol support via HTTP headers
+### Gateway (`X402::BSV::ProofGateway`, `X402::BSV::PayGateway`)
+
+The bridge between the gatekeeper and the BSV network. Gateways **can** hold keys and sign transactions — they are separate components from the gatekeeper. Each gateway:
+
+- Builds challenge data (including partial transaction templates)
+- Verifies and settles proofs
+- Interacts with ARC and/or a treasury service
+
+### Treasury (external service or local key)
+
+Holds the nonce key, mints nonce UTXOs. The ProofGateway either talks to an external treasury service (`wallet_url`) or holds a key directly (`nonce_key`). The PayGateway doesn't need a treasury.
+
+### Delegator (separate service, not our concern)
+
+Adds fee inputs to client-constructed partial txs, signs only its fee inputs. Lives between the client and the network. The gatekeeper and gateways never talk to it.
+
+## Architecture: Unified Template Model
+
+### The key insight: both gateways produce partial transaction templates
+
+The challenge is not just metadata — it includes a **partial transaction template** that the client extends by adding funding inputs (and optionally change outputs).
+
+**Base behaviour** (all gateways): build a partial tx with the payment output (amount to payee). This is the invoice.
+
+**ProofGateway override**: prepend the nonce UTXO input at index 0, signed with `SIGHASH_SINGLE | ANYONECANPAY | FORKID (0xC3)`. This locks the payment output (at output index 0) while allowing the client to append inputs and outputs freely. Then add the payment output.
+
+**PayGateway**: just the base behaviour. Payment output, no nonce.
+
+```ruby
+# Pseudocode
+class Gateway
+  def build_template(route, config)
+    tx = Transaction.new
+    tx.add_output(payee: config.payee_locking_script_hex, amount: route.amount_sats)
+    tx
+  end
+end
+
+class ProofGateway < Gateway
+  def build_template(route, config)
+    tx = Transaction.new
+    nonce = fetch_nonce  # from treasury
+    # Input 0: nonce UTXO, signed with 0xC3
+    # SIGHASH_SINGLE commits to output[0] only
+    # ANYONECANPAY allows additional inputs
+    tx.add_signed_input(nonce, key: @nonce_key, sighash: 0xC3)
+    # Output 0: payment (locked by the 0xC3 signature)
+    tx.add_output(payee: config.payee_locking_script_hex, amount: route.amount_sats)
+    tx
+  end
+end
+
+class PayGateway < Gateway
+  # inherits build_template — just the payment output, no nonce
+end
+```
+
+The client's job is identical regardless of scheme: add funding inputs, sign them, and either broadcast (BSV-proof) or hand to the server (BSV-pay). The delegator fits the same way in both flows — it receives the extended template and appends fee inputs.
+
+### Why 0xC3 for the nonce signature
+
+`SIGHASH_SINGLE | ANYONECANPAY | FORKID`:
+- `SIGHASH_SINGLE`: commits only to `output[input_index]` — since the nonce is at input 0, the signature protects only output 0 (the payment). Additional outputs (change, etc.) can be added freely.
+- `ANYONECANPAY`: excludes other inputs — funding inputs and fee inputs can be appended without invalidating the gateway's signature.
+- `FORKID`: BSV fork ID flag (required).
+
+Using `0xC1` (`SIGHASH_ALL | ANYONECANPAY`) would commit to ALL outputs, breaking the extensibility model.
+
+## Multi-protocol Support
+
+### HTTP headers
 
 | Scheme | Challenge header | Proof header | Receipt header |
 |--------|-----------------|--------------|----------------|
@@ -44,23 +114,13 @@ The middleware never decodes transactions, checks mempool, broadcasts, or intera
 | BSV-pay (ours) | `X402-Challenge` | `X402-Pay` | TBD |
 | Coinbase v2 (future) | `Payment-Required` | `Payment-Signature` | `Payment-Response` |
 
-A server can send **multiple challenge headers** simultaneously. The client picks the one it can satisfy. This is payment content negotiation.
-
-```
-HTTP/1.1 402 Payment Required
-X402-Challenge: <base64url(merkleworks challenge JSON)>
-Payment-Required: <base64url(coinbase v2 requirements JSON)>
-```
-
-For broader ecosystem compatibility, a BSV gateway could also contribute to a `Payment-Required` header with BSV in the `accepts` array alongside other chains.
+A server can send **multiple challenge headers** simultaneously. The client picks the one it can satisfy. Payment content negotiation.
 
 ### Gateway interface
 
 Each gateway implements:
 
 ```ruby
-# The interface every gateway must implement:
-#
 #   #challenge_headers(rack_request, route) → Hash
 #     Returns header name → value pairs for the 402 response.
 #     A gateway may contribute to multiple headers.
@@ -71,31 +131,6 @@ Each gateway implements:
 #   #settle!(header_name, proof_payload, rack_request, route) → result
 #     Verify and settle the proof. Raises X402::VerificationError on failure.
 #     Returns a result object (with optional receipt headers).
-```
-
-Note: `challenge_headers` returns a Hash (not a single header) because a gateway might contribute to both `X402-Challenge` and `Payment-Required`. And `proof_header_names` is an array because a gateway might accept both `X402-Proof` and `X402-Pay`.
-
-### Configuration
-
-```ruby
-X402.configure do |config|
-  config.domain = "api.example.com"
-  config.payee_locking_script_hex = "76a914...88ac"
-
-  config.gateways = [
-    X402::BSV::ProofGateway.new(
-      wallet_url: "https://wallet.example.com",
-      arc_url: "https://arc.taal.com",
-      arc_api_key: "..."
-    ),
-    X402::BSV::PayGateway.new(
-      arc_url: "https://arc.taal.com",
-      arc_api_key: "..."
-    )
-  ]
-
-  config.protect method: :GET, path: "/api/expensive", amount_sats: 100
-end
 ```
 
 ### Middleware dispatch flow
@@ -125,6 +160,29 @@ def verify_proof(rack_request, route)
 end
 ```
 
+### Configuration
+
+```ruby
+X402.configure do |config|
+  config.domain = "api.example.com"
+  config.payee_locking_script_hex = "76a914...88ac"
+
+  config.gateways = [
+    X402::BSV::ProofGateway.new(
+      nonce_key: "...",          # or wallet_url: "https://treasury.example.com"
+      arc_url: "https://arc.taal.com",
+      arc_api_key: "..."
+    ),
+    X402::BSV::PayGateway.new(
+      arc_url: "https://arc.taal.com",
+      arc_api_key: "..."
+    )
+  ]
+
+  config.protect method: :GET, path: "/api/expensive", amount_sats: 100
+end
+```
+
 ## Two BSV Schemes
 
 ### BSV-proof (merkleworks x402 spec)
@@ -133,35 +191,30 @@ Implements the merkleworks protocol. Client broadcasts, server checks mempool.
 
 **Headers**: `X402-Challenge` / `X402-Proof`
 
-**Challenge** (merkleworks JSON format):
-- Nonce UTXO (txid, vout, satoshis, locking_script_hex) — fetched from remote wallet
-- Amount, payee locking script
-- Request binding (method, path, query, headers hash, body hash)
-- Expiry, `require_mempool_accept: true`
+**Challenge**: merkleworks JSON format including a pre-signed partial tx template (Profile B) with nonce UTXO at input 0 signed with `0xC3`, payment output at output 0, plus request binding metadata (method, path, query, headers hash, body hash), expiry, and `require_mempool_accept: true`.
+
+**Client flow**: extend template with funding inputs → delegator adds fees → broadcast → retry with proof (txid + rawtx)
 
 **Settlement flow**:
 1. Decode proof JSON (echoed challenge + payment txid + rawtx)
 2. Verify echoed challenge (hash, binding, expiry)
 3. Decode raw tx
-4. Verify nonce UTXO spent as input (challenge binding)
+4. Verify nonce UTXO spent as input at index 0 (challenge binding)
 5. Verify payment output (amount + payee)
 6. Check mempool visibility via ARC
 7. Return result
 
-**Requires**: Remote wallet for nonce provision, ARC for mempool queries.
+**Requires**: Treasury (for nonce provision + template signing) + ARC (for mempool queries).
 
-**Nonce UTXOs**:
-- 1-satoshi UTXOs issued by the gateway's remote wallet
-- Single-spend provides replay protection + challenge binding
-- Nonce script structure is the remote wallet's concern
-- Timelock return: unused nonces auto-return via timelocked script path
-- No pool, no lease table — blockchain is the state
+**Why client broadcasts** (per Rui at merkleworks): Broadcasting is settlement, not authorisation. If the server broadcasts, it takes on transaction submission responsibility, retry/reconciliation logic, and mempool interaction state — pushing it towards a stateful payment processor. Client-side broadcast keeps the server stateless and HTTP authorisation cleanly decoupled from network settlement.
 
 ### BSV-pay (our BSV-native scheme)
 
 Server broadcasts via ARC. Simpler flow, no nonces needed.
 
-**Headers**: `X402-Pay` (proof header TBD for challenge — may share `X402-Challenge` or use `Payment-Required`)
+**Headers**: `X402-Challenge` / `X402-Pay`
+
+**Challenge**: partial tx template with payment output only (no nonce). The client adds funding inputs, signs, and hands the completed tx to the server.
 
 **Proof payload** (our canonical JSON):
 ```json
@@ -171,8 +224,6 @@ Server broadcasts via ARC. Simpler flow, no nonces needed.
 }
 ```
 
-The txid is redundant (derivable from rawtx) but useful for logging/receipts without deserialising.
-
 **Settlement flow**:
 1. Decode proof JSON
 2. Verify payment output (amount + payee) from the raw tx
@@ -180,13 +231,13 @@ The txid is redundant (derivable from rawtx) but useful for logging/receipts wit
 4. ARC 200 → return success result
 5. ARC error → raise VerificationError (relay ARC response to client)
 
-**No nonces needed**: ARC is the replay gate. Each tx can only be accepted once. If a client submits the same tx twice, ARC rejects the second broadcast. The tx itself is the replay protection.
+**No nonces needed**: ARC is the replay gate. Each tx can only be accepted once.
 
-**No request binding needed**: ARC acceptance proves freshness. The server doesn't need to bind the payment to a specific request — it just needs to know it received a valid, previously-unseen payment of the right amount to the right address.
+**No request binding needed**: ARC acceptance proves freshness.
 
-**Requires**: ARC only. No remote wallet, no nonce provision.
+**Requires**: ARC only. No treasury, no nonce provision.
 
-**ARC as the settlement oracle**: The middleware treats the ARC response as authoritative:
+**ARC as the settlement oracle**:
 - ARC 200 OK → relay client request to application
 - Anything else → relay ARC response to client
 
@@ -194,61 +245,53 @@ See: https://docs.bsvblockchain.org/important-concepts/details/spv/broadcasting
 
 **Open question — timeout**: ARC could be slow. A `config.arc_timeout` with a sensible default (5s?) would let the middleware return 504 Gateway Timeout if ARC doesn't respond in time.
 
-**Header size**: Standard BSV payment transactions (few inputs, couple of outputs) are a few hundred bytes. Base64 adds ~33% overhead. Typical payment tx = ~400-600 bytes in a header, well within server limits (8KB+). Exotic transactions could be a problem but aren't relevant to micropayments.
-
 ### Comparison
 
 | | BSV-proof (merkleworks) | BSV-pay (ours) |
-|--|--|--|
-| Challenge header | `X402-Challenge` | TBD |
+|---|---|---|
+| Challenge header | `X402-Challenge` | `X402-Challenge` |
 | Proof header | `X402-Proof` | `X402-Pay` |
+| Template contains | Nonce input (signed 0xC3) + payment output | Payment output only |
 | Who broadcasts | Client | Server (via ARC) |
 | Nonce needed | Yes (challenge binding) | No (ARC is replay gate) |
 | Request binding | Yes (in challenge) | No (ARC acceptance = freshness) |
 | Settlement check | Mempool visibility query | ARC broadcast response |
-| Remote wallet needed | Yes (nonce provision) | No |
-| Minimum infrastructure | Wallet + ARC | ARC only |
-
-## The Three-Actor Model (BSV)
-
-1. **Gatekeeper** (our Rack middleware) — dispatches challenges and proofs
-2. **Delegator** (fee sponsor, separate service) — adds fee inputs to client-constructed partial txs
-3. **Client** (browser + CWI wallet) — constructs partial tx, gets fees from delegator, presents proof/payment
-
-The middleware only participates at the HTTP boundary. The delegator is between the client and the network — the middleware never talks to it.
+| Treasury needed | Yes (nonce provision + signing) | No |
+| Minimum infrastructure | Treasury + ARC | ARC only |
 
 ## File Changes
 
 ### New files
 - `lib/x402/bsv.rb` — Module entry point
-- `lib/x402/bsv/proof_gateway.rb` — `X402::BSV::ProofGateway` (merkleworks BSV-proof)
-- `lib/x402/bsv/pay_gateway.rb` — `X402::BSV::PayGateway` (BSV-pay)
+- `lib/x402/bsv/gateway.rb` — `X402::BSV::Gateway` base class (builds payment-output-only template)
+- `lib/x402/bsv/proof_gateway.rb` — `X402::BSV::ProofGateway` (extends base, adds nonce, merkleworks settlement)
+- `lib/x402/bsv/pay_gateway.rb` — `X402::BSV::PayGateway` (extends base, ARC broadcast settlement)
 
 ### Modified files
 - `lib/x402/configuration.rb` — Replace `nonce_provider` + `arc_url`/`arc_api_key` with `gateways` array
 - `lib/x402/middleware.rb` — Multi-gateway dispatch (poll for challenges, route proofs)
-- `lib/x402/protocol/challenge.rb` — Challenge building moves into gateway (BSV-specific JSON structure)
-- `lib/x402/verification/pipeline.rb` — Pipeline moves into gateway (BSV-specific verification)
+- `lib/x402/protocol/challenge.rb` — Challenge building moves into gateway
+- `lib/x402/verification/pipeline.rb` — Pipeline moves into gateway
 - `lib/x402.rb` — Require `x402/bsv`
-- `DESIGN.md` — Update to reflect dispatcher architecture, two schemes, ecosystem context
+- `DESIGN.md` — Update to reflect dispatcher architecture, template model, two schemes, ecosystem context
 
 ### Removed
-- `lib/x402/verification/settlement_checks.rb` — Logic moves into `X402::BSV::ProofGateway`
+- `lib/x402/verification/settlement_checks.rb` — Logic moves into gateway classes
 
 ### Specs
-- New specs for `X402::BSV::ProofGateway` and `X402::BSV::PayGateway`
+- New specs for `X402::BSV::Gateway`, `X402::BSV::ProofGateway`, `X402::BSV::PayGateway`
 - Update middleware specs for multi-gateway dispatch
 - Update configuration specs
 
 ## DESIGN.md Updates
 
-1. **Middleware as dispatcher**: no blockchain knowledge, polls gateways for challenges, routes proofs to matching gateway.
-2. **Multi-protocol headers**: payment content negotiation across ecosystems.
-3. **Gateway interface**: `challenge_headers()`, `proof_header_names`, `settle!()`.
-4. **Two BSV schemes**: BSV-proof (merkleworks, client broadcasts, nonce-bound) and BSV-pay (server broadcasts via ARC, no nonces).
-5. **ARC as settlement oracle**: ARC response is authoritative for BSV-pay. No mempool checking, no nonce tracking.
-6. **Ecosystem context**: merkleworks BSV spec, Coinbase v2 broad ecosystem, our position between them.
-7. **Three-actor model**: Gatekeeper (middleware), Delegator (fee sponsor), Client. Middleware only at HTTP boundary.
+1. **Component boundaries**: Gatekeeper (middleware, no keys), Gateway (holds keys, signs, settles), Treasury (external or local nonce service), Delegator (separate, not our concern).
+2. **Unified template model**: all gateways produce partial tx templates. ProofGateway adds nonce at index 0 with 0xC3. PayGateway produces payment output only.
+3. **Middleware as dispatcher**: no blockchain knowledge, polls gateways for challenges, routes proofs.
+4. **Multi-protocol headers**: payment content negotiation across ecosystems.
+5. **Two BSV schemes**: BSV-proof (merkleworks) and BSV-pay (ours). Same template model, different settlement.
+6. **ARC as settlement oracle**: authoritative for BSV-pay.
+7. **Ecosystem context**: merkleworks BSV spec, Coinbase v2 broad ecosystem, our position.
 
 ## Verification
 
@@ -261,5 +304,6 @@ The middleware only participates at the HTTP boundary. The delegator is between 
 - **Coinbase facilitator pattern**: verify-then-settle two-step. Could be faked for BSV if needed.
 - **Extensions mechanism**: gas sponsoring, request binding as extension, custom auth schemes.
 - **`Payment-Required` accepts array**: BSV alongside EVM chains in a single header.
-- **Runar contract AST**: client sends ContractNode AST, gateway compiles via runar. A future scheme (`bsv:contract`?) on the same dispatcher.
+- **Runar contract AST**: client sends ContractNode AST, gateway compiles via runar. A future scheme on the same dispatcher.
 - **Multipart form data**: for POST requests with large transaction payloads if header size becomes an issue.
+- **Header size**: standard BSV payment txs are ~400-600 bytes base64-encoded, well within 8KB+ server limits.
