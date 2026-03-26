@@ -19,29 +19,6 @@ module X402
       attrs.each { |k, v| instance_variable_set(:"@#{k}", v) }
     end
 
-    # Build a challenge from a Rack request and route configuration.
-    def self.build(rack_request, route:, config:)
-      nonce = config.nonce_provider.call(rack_request)
-
-      new(
-        version: CURRENT_VERSION,
-        scheme: SUPPORTED_SCHEMES.first,
-        domain: config.domain,
-        method: rack_request.request_method,
-        path: rack_request.path_info,
-        query: rack_request.query_string,
-        req_headers_sha256: RequestBinding.headers_sha256(rack_request),
-        req_body_sha256: RequestBinding.body_sha256(rack_request),
-        amount_sats: route.amount_sats,
-        payee_locking_script_hex: config.payee_locking_script_hex,
-        nonce_txid: nonce[:txid],
-        nonce_vout: nonce[:vout],
-        nonce_satoshis: nonce[:satoshis],
-        nonce_locking_script_hex: nonce[:locking_script_hex],
-        expires_at: Time.now.to_i + DEFAULT_TTL
-      )
-    end
-
     def to_h
       {
         version: @version,
