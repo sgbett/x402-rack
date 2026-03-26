@@ -121,7 +121,7 @@ Payment-Required: <base64(v2 PaymentRequired JSON with BSV in accepts)>
 X402-Challenge: <base64url(merkleworks challenge JSON)>
 ```
 
-The `Payment-Required` challenge follows the Coinbase v2 structure:
+The `Payment-Required` challenge follows the Coinbase v2 structure. The `extra` field carries our BSV-specific enhancements — specifically the partial tx template built by `Gateway.build_template`:
 
 ```json
 {
@@ -134,13 +134,30 @@ The `Payment-Required` challenge follows the Coinbase v2 structure:
       "amount": "100",
       "asset": "BSV",
       "payTo": "1A1zP1...",
-      "maxTimeoutSeconds": 60
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "partialTx": "<base64 of partial tx template from Gateway.build_template>"
+      }
     }
   ]
 }
 ```
 
-BSV appears in the `accepts` array alongside any other chains. A multi-chain server could offer USDC on Base and BSV in the same `Payment-Required` header.
+### Progressive enhancement via `extra.partialTx`
+
+The `extra` field is the Coinbase v2 mechanism for scheme-specific data (EVM uses it for `assetTransferMethod`, `name`, `version`). We use it to carry the partial tx template.
+
+**Basic client** (any x402 v2 client): ignores `extra.partialTx`, constructs a tx from scratch using `payTo` + `amount`. This works but has the drawbacks of Profile A — the client must know how to build a BSV transaction from an address.
+
+**Smart client** (BSV-aware): reads `extra.partialTx`, deserialises the partial tx, extends it by adding funding inputs and signing. This is Profile B — the gateway has already constructed the payment output. The client just funds it.
+
+The template is an optimisation, not a requirement. The `payTo` + `amount` fields are the canonical payment specification and always sufficient on their own. The template is the gateway saying "here, I've already started building this for you."
+
+This maps directly to `X402::BSV::Gateway.build_template`:
+- **PayGateway**: template has payment output only → `extra.partialTx` contains a tx with one output
+- **ProofGateway** (if it also contributed to `Payment-Required`): template has nonce input (signed 0xC3) + payment output → `extra.partialTx` contains both
+
+BSV appears in the `accepts` array alongside any other chains. A multi-chain server could offer USDC on Base and BSV in the same `Payment-Required` header. The `extra.partialTx` is invisible to non-BSV clients.
 
 ### Gateway interface
 
@@ -240,25 +257,9 @@ Server broadcasts via ARC. Simpler flow, no nonces needed. Uses Coinbase v2 head
 
 **Headers**: `Payment-Required` / `Payment-Signature` / `Payment-Response`
 
-**Challenge** (Coinbase v2 `PaymentRequired` structure):
-```json
-{
-  "x402Version": 2,
-  "resource": { "url": "/api/expensive" },
-  "accepts": [
-    {
-      "scheme": "exact",
-      "network": "bsv:main",
-      "amount": "100",
-      "asset": "BSV",
-      "payTo": "1A1zP1...",
-      "maxTimeoutSeconds": 60
-    }
-  ]
-}
-```
+**Challenge**: Coinbase v2 `PaymentRequired` structure with `extra.partialTx` carrying the template from `Gateway.build_template` (payment output only, no nonce). See [Multi-protocol Support > Progressive enhancement](#progressive-enhancement-via-extrapartialtx) for the full JSON structure.
 
-Includes a partial tx template with payment output only (no nonce). The client adds funding inputs, signs, and hands the completed tx to the server.
+A basic client constructs a tx from `payTo` + `amount`. A smart client extends `extra.partialTx` by adding funding inputs, signs, and hands the completed tx to the server.
 
 **Payment payload** (Coinbase v2 `PaymentPayload` structure with BSV-specific payload):
 ```json
