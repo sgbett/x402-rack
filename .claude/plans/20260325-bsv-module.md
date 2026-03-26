@@ -313,7 +313,10 @@ For basic clients that ignore `extra.partialTx` and construct a tx from scratch,
 
 See: https://docs.bsvblockchain.org/important-concepts/details/spv/broadcasting
 
-**Open question — timeout**: ARC could be slow. A `config.arc_timeout` with a sensible default (5s?) would let the middleware return 504 Gateway Timeout if ARC doesn't respond in time.
+**ARC configuration defaults**:
+- `arc_wait_for: "SEEN_ON_NETWORK"` — tx has propagated to multiple nodes. Safe default for micropayments.
+- `arc_timeout: 5` — seconds. Returns 504 Gateway Timeout if ARC doesn't respond.
+- Both configurable per gateway. Lower-value endpoints could use `ACCEPTED_BY_NETWORK` for speed. Higher-value could bump the timeout.
 
 ### Comparison
 
