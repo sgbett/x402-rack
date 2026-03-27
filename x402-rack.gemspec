@@ -12,10 +12,9 @@ Gem::Specification.new do |spec|
   spec.description = "Rack middleware implementing the x402 stateless settlement-gated HTTP protocol " \
                      "using BSV (Bitcoin SV) payments."
   spec.homepage = "https://github.com/sgbett/x402-rack"
-  spec.license = "Open BSV License"
+  spec.license = "LicenseRef-OpenBSV"
   spec.required_ruby_version = ">= 3.1.0"
 
-  spec.metadata["homepage_uri"] = spec.homepage
   spec.metadata["source_code_uri"] = spec.homepage
   spec.metadata["changelog_uri"] = "#{spec.homepage}/blob/master/CHANGELOG.md"
   spec.metadata["rubygems_mfa_required"] = "true"
@@ -33,9 +32,9 @@ Gem::Specification.new do |spec|
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "base64"
-  spec.add_dependency "bsv-sdk"
+  spec.add_dependency "base64", "~> 0.2"
+  spec.add_dependency "bsv-sdk", "~> 0.3"
   spec.add_dependency "bsv-wallet", "~> 0.1"
   spec.add_dependency "json-canonicalization", "~> 1.0"
-  spec.add_dependency "rack", ">= 2.0"
+  spec.add_dependency "rack", "~> 3.0"
 end
