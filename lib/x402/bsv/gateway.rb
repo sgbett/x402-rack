@@ -24,9 +24,12 @@ module X402
       #   Ignored when wallet is provided (derived addresses used instead).
       # @param wallet [BSV::Wallet::ProtoWallet, nil] wallet for key derivation.
       #   When provided, each challenge gets a unique derived payee address.
-      def initialize(payee_locking_script_hex: nil, wallet: nil)
+      # @param challenge_secret [String, nil] HMAC secret for signing challenge data.
+      #   Auto-generated if not provided. Used to verify payTo hasn't been tampered with.
+      def initialize(payee_locking_script_hex: nil, wallet: nil, challenge_secret: nil)
         @payee_locking_script_hex = payee_locking_script_hex
         @wallet = wallet
+        @challenge_secret = challenge_secret || SecureRandom.hex(32)
       end
 
       # Build a partial transaction template for the given route.
@@ -107,6 +110,32 @@ module X402
       # For settlement verification: parse a payee script from hex
       def payee_script_from_hex(hex)
         ::BSV::Script::Script.from_hex(hex)
+      end
+
+      # HMAC-sign the payTo field to prevent client tampering.
+      # The signature is included in the challenge and verified at settlement.
+      def sign_pay_to(pay_to_hex)
+        OpenSSL::HMAC.hexdigest("SHA256", @challenge_secret, pay_to_hex)
+      end
+
+      # Verify the payTo HMAC from an echoed challenge/accepted block.
+      # Raises VerificationError if the signature doesn't match.
+      def verify_pay_to_signature!(pay_to_hex, signature)
+        if signature.nil?
+          raise X402::VerificationError.new("payTo signature mismatch — possible tampering", status: 400)
+        end
+
+        expected = sign_pay_to(pay_to_hex)
+        return if secure_compare(expected, signature)
+
+        raise X402::VerificationError.new("payTo signature mismatch — possible tampering", status: 400)
+      end
+
+      # Constant-time string comparison to prevent timing attacks
+      def secure_compare(left, right)
+        return false unless left.bytesize == right.bytesize
+
+        OpenSSL.fixed_length_secure_compare(left, right)
       end
 
       def build_op_return_script(binding_hash)

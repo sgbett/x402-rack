@@ -46,15 +46,15 @@ RSpec.describe X402::BSV::PayGateway do
     template
   end
 
-  def encode_payment_payload(transaction, accepted_overrides: {})
-    accepted = {
-      "scheme" => "exact",
-      "network" => "bsv:mainnet",
-      "amount" => "100",
-      "asset" => "BSV",
-      "payTo" => payee_hex,
-      "maxTimeoutSeconds" => 60
-    }.merge(accepted_overrides)
+  # Extract the accepted block from a gateway's challenge (includes payToSig)
+  def accepted_from_challenge(gateway_inst = gateway, req = mock_request)
+    headers = gateway_inst.challenge_headers(req, route)
+    challenge = JSON.parse(Base64.strict_decode64(headers["Payment-Required"]))
+    challenge["accepts"].first
+  end
+
+  def encode_payment_payload(transaction, accepted_overrides: {}, gateway_instance: gateway)
+    accepted = accepted_from_challenge(gateway_instance).merge(accepted_overrides)
 
     payload = {
       "x402Version" => 2,
@@ -172,6 +172,25 @@ RSpec.describe X402::BSV::PayGateway do
       end
     end
 
+    context "with tampered payTo" do
+      it "raises VerificationError when payTo is changed" do
+        attacker_payee = "76a914#{"ff" * 20}88ac"
+        proof = encode_payment_payload(tx, accepted_overrides: { "payTo" => attacker_payee })
+        expect { gateway.settle!("Payment-Signature", proof, request, route) }
+          .to raise_error(X402::VerificationError, /payTo signature mismatch/)
+      end
+
+      it "raises VerificationError when payToSig is missing" do
+        accepted = accepted_from_challenge
+        accepted["extra"].delete("payToSig")
+        raw = { "x402Version" => 2, "accepted" => accepted,
+                "payload" => { "rawtx" => tx.to_binary.unpack1("H*"), "txid" => tx.txid_hex } }
+        payload = Base64.strict_encode64(JSON.generate(raw))
+        expect { gateway.settle!("Payment-Signature", payload, request, route) }
+          .to raise_error(X402::VerificationError, /payTo signature mismatch/)
+      end
+    end
+
     context "with wrong network" do
       it "raises VerificationError" do
         proof = encode_payment_payload(tx, accepted_overrides: { "network" => "eip155:1" })
@@ -206,9 +225,10 @@ RSpec.describe X402::BSV::PayGateway do
       end
 
       it "raises VerificationError for missing rawtx" do
+        accepted = accepted_from_challenge
         raw = {
           "x402Version" => 2,
-          "accepted" => { "network" => "bsv:mainnet", "amount" => "100" },
+          "accepted" => accepted,
           "payload" => {}
         }
         payload = Base64.strict_encode64(JSON.generate(raw))
@@ -248,7 +268,7 @@ RSpec.describe X402::BSV::PayGateway do
                        unlocking_script: BSV::Script::Script.new("\x00".b)
                      ))
 
-        proof = encode_payment_payload(tx)
+        proof = encode_payment_payload(tx, gateway_instance: strict_gw)
         expect { strict_gw.settle!("Payment-Signature", proof, request, route) }
           .to raise_error(X402::VerificationError, /binding/)
       end

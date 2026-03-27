@@ -29,8 +29,9 @@ module X402
       # @param payee_locking_script_hex [String, nil] payee script (falls back to config)
       def initialize(arc_client:, arc_wait_for: DEFAULT_ARC_WAIT_FOR,
                      arc_timeout: DEFAULT_ARC_TIMEOUT, binding_mode: :permissive,
-                     payee_locking_script_hex: nil, wallet: nil)
-        super(payee_locking_script_hex: payee_locking_script_hex, wallet: wallet)
+                     payee_locking_script_hex: nil, wallet: nil, challenge_secret: nil)
+        super(payee_locking_script_hex: payee_locking_script_hex, wallet: wallet,
+              challenge_secret: challenge_secret)
         @arc_client = arc_client
         @arc_wait_for = arc_wait_for
         @arc_timeout = arc_timeout
@@ -49,8 +50,10 @@ module X402
       def settle!(_header_name, proof_payload, rack_request, route)
         payload = decode_payment_payload(proof_payload)
         verify_accepted!(payload, route)
-        transaction = decode_transaction(payload)
         accepted_payee = payload.dig("accepted", "payTo")
+        pay_to_sig = payload.dig("accepted", "extra", "payToSig")
+        verify_pay_to_signature!(accepted_payee, pay_to_sig)
+        transaction = decode_transaction(payload)
         verify_payment_output!(transaction, route, accepted_payee)
         verify_binding!(transaction, rack_request)
         broadcast!(transaction)
@@ -77,7 +80,10 @@ module X402
           "asset" => ASSET,
           "payTo" => payee_hex,
           "maxTimeoutSeconds" => DEFAULT_MAX_TIMEOUT_SECONDS,
-          "extra" => { "partialTx" => Base64.strict_encode64(template.to_binary) }
+          "extra" => {
+            "partialTx" => Base64.strict_encode64(template.to_binary),
+            "payToSig" => sign_pay_to(payee_hex)
+          }
         }
       end
 
