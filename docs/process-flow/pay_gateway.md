@@ -6,9 +6,9 @@
 ```
  Flow       | N | From    → To      |   | HTTP                           | Content-Type             | x402 Headers              | Body
 ------------|---|-------------------|---|--------------------------------|--------------------------|---------------------------|-----------------------------
- │          | 1 | client  →  server |   | GET /protected    |                          |                           |
+ │          | 1 | client  →  server |   | GET /protected                 |                          |                           |
  402        | 2 | server  →  client | ⚠ | HTTP/1.1 402 Payment Required  | application/json         | Payment-Required: [1]     | { "error": "Payment Required" }
- │          | 3 | client  →  server |   | GET /protected    |                          | Payment-Signature: [2]    |
+ │          | 3 | client  →  server |   | GET /protected                 |                          | Payment-Signature: [2]    |
  │          | 4 | server  →  ARC    |   | POST /v1/tx                    | application/octet-stream |                           | <raw tx bytes>
  ├─ 200     | 5 | ARC     →  server |   | HTTP/1.1 200                   | application/json         |                           | { "txid": "c0d6...5a6", ... }
  │   │      | 6 | server  →  client |   | HTTP/1.1 200 OK                | application/json         | Payment-Response: [3]     | { "data": "..." }
@@ -32,9 +32,9 @@ Key:
 ```mermaid
 sequenceDiagram
   autonumber
-  participant client as BSV Browser<br/>———————————————<br/>npm::bsv-x402
-  participant server as Server<br/>———————————<br/>x402-rack
-  participant arc as ARC Endpoint<br/>———————————<br/>bitcoin-sv/arc
+  participant client as BSV Browser<br/>———<br/>npm::bsv-x402
+  participant server as Server<br/>———<br/>x402-rack
+  participant arc as ARC Endpoint<br/>———<br/>bitcoin-sv/arc
 
   client->>server: GET /protected
 
