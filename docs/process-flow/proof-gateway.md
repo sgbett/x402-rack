@@ -6,15 +6,14 @@
  Flow       | N | From    → To        |   | HTTP                           | Content-Type             | x402 Headers              | Body
 ------------|---|---------------------|---|--------------------------------|--------------------------|---------------------------|-----------------------------
  │          | 1 | client  →  server   |   | GET /weather?city=lisbon       |                          |                           |
- 402        | 2 | server  →  client   | ⚠ | HTTP/1.1 402 Payment Required  | application/json         | X402-Challenge: [1]       | { "error": "Payment Required" }
+402         | 2 | server  →  client   | ⚠ | HTTP/1.1 402 Payment Required  | application/json         | X402-Challenge: [1]       | { "error": "Payment Required" }
  │          | 3 | client  →  deleg.   |   | POST /delegate/x402            | application/octet-stream |                           | <partial tx bytes>
  │          | 4 | deleg.  →  client   |   | HTTP/1.1 200                   | application/octet-stream |                           | <completed tx bytes>
  │          | 5 | client  →  ARC      |   | POST /v1/tx                    | application/octet-stream | X-WaitFor: SEEN_ON_NETWORK| <raw tx bytes>
  ├─ 200     | 6 | ARC     →  client   |   | HTTP/1.1 200                   | application/json         |                           | { "txid": "c0d6...5a6", ... }
  │   │      | 7 | client  →  server   |   | GET /weather?city=lisbon       |                          | X402-Proof: [2]           |
- │   │      |   |                     |   |                                |                          | X402-Challenge: [1]       |
  │   ├─ 200 | 8 | server  →  client   |   | HTTP/1.1 200 OK                | application/json         |                           | { "data": "..." }
- │   └─ 402 | 9 | server  →  client   | ✗ | HTTP/1.1 402                   | application/json         |                           | { "error": "mempool check failed" }
+ │   └─ 402 | 9 | server  →  client   | ✗ | HTTP/1.1 402                   | application/json         | X402-Challenge: [1]       | { "error": "mempool check failed" }
  └─ XXX     |10 | ARC     →  client   | ✗ | HTTP/1.1 XXX ...               | application/json         |                           | { "status": XXX, "title": "..." }
 
 Key:
@@ -51,7 +50,6 @@ sequenceDiagram
     Note over delegator: Validate structure<br/>Add fee inputs<br/>Sign fee inputs only
     delegator->>client: HTTP/1.1 200 OK<br/><completed tx bytes>
     deactivate delegator
-
   end
 
   client->>arc: POST /v1/tx<br/>Content-Type: application/octet-stream<br/>X-WaitFor: SEEN_ON_NETWORK<br/><raw tx bytes>

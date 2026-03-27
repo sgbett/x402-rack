@@ -11,10 +11,9 @@
  │          | 3 | client  →  server |   | GET /protected                 |                          | Payment-Signature: [2]    |
  │          | 4 | server  →  ARC    |   | POST /v1/tx                    | application/octet-stream |                           | <raw tx bytes>
  ├─ 200     | 5 | ARC     →  server |   | HTTP/1.1 200                   | application/json         |                           | { "txid": "c0d6...5a6", ... }
- │   │      | 6 | server  →  client |   | HTTP/1.1 200 OK                | application/json         | Payment-Response: [3]     | { "data": "..." }
- ├─ XXX     | 7 | ARC     →  server | ✗ | HTTP/1.1 XXX ...               | application/json         |                           | { "status": XXX, "title": "..." }
- │   │      | 8 | server  →  client |   | HTTP/1.1 502                   | application/json         |                           | { "error": "ARC broadcast failed: ..." }
- └─ (none)  | 9 | server  →  client | ⚠ | HTTP/1.1 402 Payment Required  | application/json         | Payment-Required: [1]     | (no matching proof header)
+ │   └─ 200 | 6 | server  →  client |   | HTTP/1.1 200 OK                | application/json         | Payment-Response: [3]     | { "data": "..." }
+ └─ XXX     | 7 | ARC     →  server | ✗ | HTTP/1.1 XXX ...               | application/json         |                           | { "status": XXX, "title": "..." }
+     └─ 502 | 8 | server  →  client | ✗ | HTTP/1.1 502                   | application/json         |                           | { "error": "ARC broadcast failed: ..." }
 
 Key:
 
