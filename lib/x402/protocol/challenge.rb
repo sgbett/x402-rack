@@ -13,7 +13,7 @@ module X402
                 :req_headers_sha256, :req_body_sha256,
                 :amount_sats, :payee_locking_script_hex,
                 :nonce_txid, :nonce_vout, :nonce_satoshis, :nonce_locking_script_hex,
-                :expires_at
+                :expires_at, :partial_tx_b64, :payee_sig
 
     def initialize(attrs = {})
       attrs.each { |k, v| instance_variable_set(:"@#{k}", v) }
@@ -47,8 +47,17 @@ module X402
       OpenSSL::Digest::SHA256.hexdigest(to_canonical_json)
     end
 
+    # Full representation for header encoding — includes optional fields
+    # like partial_tx_b64 that are excluded from the canonical hash.
+    def to_header_h
+      h = to_h
+      h[:partial_tx_b64] = @partial_tx_b64 if @partial_tx_b64
+      h[:payee_sig] = @payee_sig if @payee_sig
+      h
+    end
+
     def to_header
-      Base64Url.encode(to_canonical_json)
+      Base64Url.encode(to_header_h.to_json)
     end
 
     # Reconstruct a challenge from the echoed X402-Challenge header.
