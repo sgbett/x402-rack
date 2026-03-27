@@ -109,9 +109,9 @@ module X402
         ::BSV::Script::Script.from_hex(hex)
       end
 
-      def build_op_return_script(data)
-        # OP_FALSE OP_RETURN OP_PUSH32 <32-byte hash>
-        hex = "006a20#{data.unpack1("H*")}"
+      def build_op_return_script(binding_hash)
+        # OP_FALSE OP_RETURN OP_PUSH4 "x402" OP_PUSH32 <32-byte binding hash>
+        hex = "006a047834303220#{binding_hash.unpack1("H*")}"
         ::BSV::Script::Script.from_hex(hex)
       end
     end
