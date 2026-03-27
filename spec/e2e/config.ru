@@ -52,7 +52,7 @@ X402.configure do |config|
     )
   ]
 
-  config.protect method: "GET", path: "/protected", amount_sats: 1
+  config.protect method: "GET", path: "/protected", amount_sats: 500
 end
 
 # Simple app that routes based on path
