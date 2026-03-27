@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    x402 (0.1.0)
+    x402-rack (0.1.0)
       base64
       bsv-sdk
       json-canonicalization (~> 1.0)
@@ -83,7 +83,7 @@ DEPENDENCIES
   rake (~> 13.0)
   rspec (~> 3.0)
   rubocop (~> 1.21)
-  x402!
+  x402-rack!
 
 BUNDLED WITH
    2.6.2
