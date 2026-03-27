@@ -45,3 +45,4 @@ bsv-x402, BRC-100/CWI, BSV Browser, retry logic, fee delegation.
 ## Process Flows
 
 - **PayGateway**: [docs/process-flow/pay-gateway.md](docs/process-flow/pay-gateway.md)
+- **ProofGateway**: [docs/process-flow/proof-gateway.md](docs/process-flow/proof-gateway.md)
