@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "rack"
+require_relative "../../../lib/x402/protocol/request_binding"
 
 RSpec.describe X402::RequestBinding do
   def mock_request(body: "", headers: {})

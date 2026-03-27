@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "securerandom"
+require_relative "../../../lib/x402/protocol/base64url"
 
 RSpec.describe X402::Base64Url do
   describe ".encode" do

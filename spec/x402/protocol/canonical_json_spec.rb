@@ -1,5 +1,10 @@
 # frozen_string_literal: true
 
+require "json/canonicalization"
+require_relative "../../../lib/x402/protocol/base64url"
+require_relative "../../../lib/x402/protocol/request_binding"
+require_relative "../../../lib/x402/protocol/challenge"
+
 RSpec.describe "JSON Canonicalization (RFC 8785)" do
   it "sorts hash keys alphabetically" do
     expect({ z: 1, a: 2 }.to_json_c14n).to eq('{"a":2,"z":1}')

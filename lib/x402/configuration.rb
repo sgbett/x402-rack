@@ -4,13 +4,14 @@ module X402
   class Configuration
     Route = Struct.new(:http_method, :path, :amount_sats, keyword_init: true)
 
-    attr_accessor :domain, :payee_locking_script_hex, :nonce_provider, :arc_url, :arc_api_key
+    GATEWAY_METHODS = %i[challenge_headers proof_header_names settle!].freeze
+
+    attr_accessor :domain, :payee_locking_script_hex, :gateways
     attr_reader :routes
 
     def initialize
       @routes = []
-      @arc_url = nil
-      @arc_api_key = nil
+      @gateways = []
     end
 
     # Register a protected route.
@@ -39,11 +40,39 @@ module X402
         raise ConfigurationError,
               "payee_locking_script_hex is required"
       end
-      raise ConfigurationError, "nonce_provider is required" unless nonce_provider.respond_to?(:call)
+      validate_gateways!
       raise ConfigurationError, "at least one route must be protected" if routes.empty?
     end
 
     private
+
+    def validate_gateways!
+      raise ConfigurationError, "at least one gateway is required" if gateways.nil? || gateways.empty?
+
+      gateways.each_with_index do |gw, i|
+        GATEWAY_METHODS.each do |method|
+          unless gw.respond_to?(method)
+            raise ConfigurationError,
+                  "gateway at index #{i} does not respond to ##{method}"
+          end
+        end
+      end
+
+      validate_no_duplicate_proof_headers!
+    end
+
+    def validate_no_duplicate_proof_headers!
+      seen = {}
+      gateways.each_with_index do |gw, i|
+        gw.proof_header_names.each do |name|
+          if seen.key?(name)
+            raise ConfigurationError,
+                  "duplicate proof header \"#{name}\" claimed by gateways at indices #{seen[name]} and #{i}"
+          end
+          seen[name] = i
+        end
+      end
+    end
 
     def method_matches?(route_method, request_method)
       route_method == "*" || route_method == request_method.upcase

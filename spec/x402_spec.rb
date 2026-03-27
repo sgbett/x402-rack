@@ -9,10 +9,15 @@ RSpec.describe X402 do
     after { described_class.reset_configuration! }
 
     it "yields a configuration object" do
+      mock_gateway = Object.new
+      def mock_gateway.challenge_headers(*) = {}
+      def mock_gateway.proof_header_names = ["X402-Proof"]
+      def mock_gateway.settle!(*); end
+
       described_class.configure do |c|
         c.domain = "example.com"
         c.payee_locking_script_hex = "76a914#{"aa" * 20}88ac"
-        c.nonce_provider = -> {}
+        c.gateways = [mock_gateway]
         c.protect(method: "GET", path: "/", amount_sats: 1)
         expect(c).to be_a(X402::Configuration)
       end
