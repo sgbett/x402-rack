@@ -4,6 +4,7 @@ PATH
     x402-rack (0.1.0)
       base64
       bsv-sdk
+      bsv-wallet (~> 0.1)
       json-canonicalization (~> 1.0)
       rack (>= 2.0)
 
@@ -16,6 +17,9 @@ GEM
     base64 (0.3.0)
     bigdecimal (4.0.1)
     bsv-sdk (0.2.1)
+    bsv-wallet (0.1.0)
+      base64 (~> 0.2)
+      bsv-sdk (~> 0.2)
     diff-lcs (1.6.2)
     json (2.19.2)
     json-canonicalization (1.0.0)
