@@ -11,33 +11,32 @@ module E2EHelper
   # Start a Rack server in a background thread for testing.
   # Returns the thread and the port.
   def self.start_server(config_ru:, port: 9393)
-    require "rack"
-    require "webrick"
+    require "rackup"
 
-    app, = Rack::Builder.parse_file(config_ru)
-
-    server = WEBrick::HTTPServer.new(
+    server = Rackup::Server.new(
+      config: config_ru,
       Port: port,
+      server: :webrick,
       Logger: WEBrick::Log.new(File::NULL),
-      AccessLog: []
+      AccessLog: [],
+      Silent: true
     )
-    server.mount "/", Rack::Handler::WEBrick, app
 
     thread = Thread.new { server.start }
 
     # Wait for server to be ready
-    10.times do
+    20.times do
       Net::HTTP.get(URI("http://localhost:#{port}/"))
       break
     rescue Errno::ECONNREFUSED
-      sleep 0.1
+      sleep 0.2
     end
 
     [server, thread, port]
   end
 
   def self.stop_server(server, thread)
-    server&.shutdown
+    server&.server&.shutdown if server.respond_to?(:server)
     thread&.join(2)
   end
 

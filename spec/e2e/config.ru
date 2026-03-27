@@ -10,6 +10,7 @@
 #   ARC_API_KEY   - ARC API key (optional)
 #   PAYEE_SCRIPT  - payee locking script hex (required)
 
+require "bundler/setup"
 require "x402"
 require "x402/bsv"
 
@@ -39,6 +40,7 @@ arc_client.define_singleton_method(:broadcast) do |transaction|
   JSON.parse(response.body)
 end
 
+X402.reset_configuration!
 X402.configure do |config|
   config.domain = "localhost"
   config.payee_locking_script_hex = payee_script
@@ -50,19 +52,18 @@ X402.configure do |config|
     )
   ]
 
-  config.protect method: :GET, path: "/protected", amount_sats: 1
+  config.protect method: "GET", path: "/protected", amount_sats: 1
 end
 
-app = Rack::Builder.new do
-  use X402::Middleware
-
-  map "/protected" do
-    run ->(_env) { [200, { "content-type" => "application/json" }, ['{"secret":"you paid for this"}']] }
-  end
-
-  map "/" do
-    run ->(_env) { [200, { "content-type" => "text/plain" }, ["OK"]] }
+# Simple app that routes based on path
+app = lambda do |env|
+  case env["PATH_INFO"]
+  when "/protected"
+    [200, { "content-type" => "application/json" }, ['{"secret":"you paid for this"}']]
+  else
+    [200, { "content-type" => "text/plain" }, ["OK"]]
   end
 end
 
+use X402::Middleware
 run app
