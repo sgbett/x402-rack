@@ -21,8 +21,8 @@ module X402
       # @param nonce_provider [#call] callable returning nonce UTXO hash
       # @param arc_client [#query] ARC client for mempool queries
       # @param payee_locking_script_hex [String, nil] payee script (falls back to config)
-      def initialize(nonce_provider:, arc_client:, payee_locking_script_hex: nil)
-        super(payee_locking_script_hex: payee_locking_script_hex)
+      def initialize(nonce_provider:, arc_client:, payee_locking_script_hex: nil, wallet: nil)
+        super(payee_locking_script_hex: payee_locking_script_hex, wallet: wallet)
         @nonce_provider = nonce_provider
         @arc_client = arc_client
       end
@@ -62,7 +62,7 @@ module X402
           req_headers_sha256: RequestBinding.headers_sha256(rack_request),
           req_body_sha256: RequestBinding.body_sha256(rack_request),
           amount_sats: route.amount_sats,
-          payee_locking_script_hex: resolve_payee_hex,
+          payee_locking_script_hex: derive_payee_hex,
           nonce_txid: nonce[:txid],
           nonce_vout: nonce[:vout],
           nonce_satoshis: nonce[:satoshis],
@@ -92,7 +92,7 @@ module X402
         transaction = decode_transaction(proof)
         check_txid!(transaction, proof)
         check_nonce_input!(transaction, challenge)
-        verify_payment_output!(transaction, route)
+        verify_payment_output!(transaction, route, challenge.payee_locking_script_hex)
         transaction
       end
 
@@ -122,8 +122,8 @@ module X402
         raise VerificationError, "nonce UTXO not spent in transaction"
       end
 
-      def verify_payment_output!(transaction, route)
-        payee_script = resolve_payee_script
+      def verify_payment_output!(transaction, route, payee_hex)
+        payee_script = payee_script_from_hex(payee_hex)
         found = transaction.outputs.any? do |output|
           output.locking_script == payee_script && output.satoshis >= route.amount_sats
         end
@@ -136,10 +136,6 @@ module X402
         @arc_client.query(txid)
       rescue StandardError => e
         raise VerificationError.new("mempool check failed: #{e.message}", status: 502)
-      end
-
-      def resolve_payee_hex
-        @payee_locking_script_hex || X402.configuration.payee_locking_script_hex
       end
     end
   end

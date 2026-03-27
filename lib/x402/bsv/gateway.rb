@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "openssl"
+require "securerandom"
 require "bsv-sdk"
 
 module X402
@@ -10,13 +11,22 @@ module X402
     # Builds partial transaction templates containing a payment output
     # and an OP_RETURN request binding output. Subclasses override or
     # extend this to add scheme-specific behaviour (nonces, headers, settlement).
+    #
+    # When a wallet is provided, each challenge derives a unique payee
+    # address via BRC-43 key derivation, preventing address reuse.
     class Gateway
+      PROTOCOL_ID = [2, "x402 payment"].freeze
+
       attr_reader :payee_locking_script_hex
 
-      # @param payee_locking_script_hex [String, nil] payee script hex;
-      #   falls back to X402.configuration.payee_locking_script_hex if nil
-      def initialize(payee_locking_script_hex: nil)
+      # @param payee_locking_script_hex [String, nil] static payee script hex;
+      #   falls back to X402.configuration.payee_locking_script_hex if nil.
+      #   Ignored when wallet is provided (derived addresses used instead).
+      # @param wallet [BSV::Wallet::ProtoWallet, nil] wallet for key derivation.
+      #   When provided, each challenge gets a unique derived payee address.
+      def initialize(payee_locking_script_hex: nil, wallet: nil)
         @payee_locking_script_hex = payee_locking_script_hex
+        @wallet = wallet
       end
 
       # Build a partial transaction template for the given route.
@@ -24,14 +34,18 @@ module X402
       # Output 0: payment (amount_sats to payee locking script)
       # Output 1: OP_RETURN request binding (SHA-256 of method + path + query)
       #
+      # When a wallet is configured, derives a unique payee address per challenge.
+      # Returns both the transaction and the payee script hex (needed for the challenge JSON).
+      #
       # @param rack_request [Rack::Request]
       # @param route [X402::Configuration::Route]
-      # @return [BSV::Transaction::Transaction]
+      # @return [Array(BSV::Transaction::Transaction, String)] transaction and payee script hex
       def build_template(rack_request, route)
         tx = ::BSV::Transaction::Transaction.new
 
-        # Output 0: payment
-        payee_script = resolve_payee_script
+        # Output 0: payment (unique address if wallet configured, static otherwise)
+        payee_hex = derive_payee_hex
+        payee_script = ::BSV::Script::Script.from_hex(payee_hex)
         tx.add_output(::BSV::Transaction::TransactionOutput.new(
                         satoshis: route.amount_sats,
                         locking_script: payee_script
@@ -45,7 +59,7 @@ module X402
                         locking_script: op_return_script
                       ))
 
-        tx
+        [tx, payee_hex]
       end
 
       # Compute the SHA-256 hash used for request binding.
@@ -60,10 +74,38 @@ module X402
 
       private
 
-      def resolve_payee_script
+      # Derive a unique payee locking script hex for this challenge.
+      # Uses BRC-43 key derivation when a wallet is configured.
+      # Falls back to the static payee_locking_script_hex otherwise.
+      def derive_payee_hex
+        if @wallet
+          derive_unique_payee_hex
+        else
+          resolve_static_payee_hex
+        end
+      end
+
+      def derive_unique_payee_hex
+        key_id = SecureRandom.hex(16)
+        result = @wallet.get_public_key({
+                                          protocol_id: PROTOCOL_ID,
+                                          key_id: key_id,
+                                          identity_key: false
+                                        })
+        pubkey = ::BSV::Primitives::PublicKey.from_hex(result[:public_key])
+        h160 = pubkey.hash160.unpack1("H*")
+        "76a914#{h160}88ac"
+      end
+
+      def resolve_static_payee_hex
         hex = @payee_locking_script_hex || X402.configuration.payee_locking_script_hex
         raise X402::ConfigurationError, "payee_locking_script_hex is required" if hex.nil? || hex.empty?
 
+        hex
+      end
+
+      # For settlement verification: parse a payee script from hex
+      def payee_script_from_hex(hex)
         ::BSV::Script::Script.from_hex(hex)
       end
 

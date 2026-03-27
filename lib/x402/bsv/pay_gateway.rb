@@ -29,8 +29,8 @@ module X402
       # @param payee_locking_script_hex [String, nil] payee script (falls back to config)
       def initialize(arc_client:, arc_wait_for: DEFAULT_ARC_WAIT_FOR,
                      arc_timeout: DEFAULT_ARC_TIMEOUT, binding_mode: :permissive,
-                     payee_locking_script_hex: nil)
-        super(payee_locking_script_hex: payee_locking_script_hex)
+                     payee_locking_script_hex: nil, wallet: nil)
+        super(payee_locking_script_hex: payee_locking_script_hex, wallet: wallet)
         @arc_client = arc_client
         @arc_wait_for = arc_wait_for
         @arc_timeout = arc_timeout
@@ -50,7 +50,8 @@ module X402
         payload = decode_payment_payload(proof_payload)
         verify_accepted!(payload, route)
         transaction = decode_transaction(payload)
-        verify_payment_output!(transaction, route)
+        accepted_payee = payload.dig("accepted", "payTo")
+        verify_payment_output!(transaction, route, accepted_payee)
         verify_binding!(transaction, rack_request)
         broadcast!(transaction)
         build_settlement_result(transaction)
@@ -59,8 +60,7 @@ module X402
       private
 
       def build_challenge(rack_request, route)
-        template = build_template(rack_request, route)
-        payee_hex = @payee_locking_script_hex || X402.configuration.payee_locking_script_hex
+        template, payee_hex = build_template(rack_request, route)
 
         {
           "x402Version" => 2,
@@ -113,8 +113,8 @@ module X402
         raise VerificationError.new("failed to decode transaction: #{e.message}", status: 400)
       end
 
-      def verify_payment_output!(transaction, route)
-        payee_script = resolve_payee_script
+      def verify_payment_output!(transaction, route, payee_hex)
+        payee_script = payee_script_from_hex(payee_hex)
         found = transaction.outputs.any? do |output|
           output.locking_script == payee_script && output.satoshis >= route.amount_sats
         end
