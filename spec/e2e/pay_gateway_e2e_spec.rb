@@ -79,10 +79,10 @@ RSpec.describe "PayGateway e2e", :e2e do
                                ))
       end
 
-      # Add a funded input from the client wallet
-      # This requires the client wallet to have UTXOs — uses the SDK's wallet
-      wallet = BSV::Wallet::Wallet.new(private_key: client_key)
-      wallet.fund_and_sign(transaction)
+      # Add funded inputs from the client wallet using WhatsOnChain testnet
+      provider = BSV::Network::WhatsOnChain.new(network: :testnet)
+      wallet = BSV::Wallet::Wallet.new(private_key: client_key, provider: provider)
+      wallet.fund_and_sign(transaction, network: :testnet)
 
       # Step 3: Submit payment
       payment_header = E2EHelper.build_payment_signature(challenge, transaction)
@@ -94,6 +94,7 @@ RSpec.describe "PayGateway e2e", :e2e do
       response = http.request(request)
 
       # Step 4: Verify
+      puts "Response: #{response.code} #{response.body}" unless response.code == "200"
       expect(response.code).to eq("200")
 
       body = JSON.parse(response.body)
