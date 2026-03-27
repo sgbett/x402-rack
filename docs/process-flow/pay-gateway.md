@@ -4,16 +4,16 @@
 
 
 ```
- Flow       | N | From    → To      |   | HTTP                           | Content-Type             | x402 Headers              | Body
-------------|---|-------------------|---|--------------------------------|--------------------------|---------------------------|-----------------------------
- │          | 1 | client  →  server |   | GET /protected                 |                          |                           |
- 402        | 2 | server  →  client | ⚠ | HTTP/1.1 402 Payment Required  | application/json         | Payment-Required: [1]     | { "error": "Payment Required" }
- │          | 3 | client  →  server |   | GET /protected                 |                          | Payment-Signature: [2]    |
- │          | 4 | server  →  ARC    |   | POST /v1/tx                    | application/octet-stream |                           | <raw tx bytes>
- ├─ 200     | 5 | ARC     →  server |   | HTTP/1.1 200                   | application/json         |                           | { "txid": "c0d6...5a6", ... }
- │   └─ 200 | 6 | server  →  client |   | HTTP/1.1 200 OK                | application/json         | Payment-Response: [3]     | { "data": "..." }
- └─ XXX     | 7 | ARC     →  server | ✗ | HTTP/1.1 XXX ...               | application/json         |                           | { "status": XXX, "title": "..." }
-     └─ 502 | 8 | server  →  client | ✗ | HTTP/1.1 502                   | application/json         |                           | { "error": "ARC broadcast failed: ..." }
+ Flow        | N | From    → To      |   | HTTP                           | Content-Type             | x402 Headers              | Body
+-------------|---|-------------------|---|--------------------------------|--------------------------|---------------------------|-----------------------------
+  │          | 1 | client  →  server |   | GET /protected                 |                          |                           |
+ 402         | 2 | server  →  client | ⚠ | HTTP/1.1 402 Payment Required  | application/json         | Payment-Required: [1]     | { "error": "Payment Required" }
+  │          | 3 | client  →  server |   | GET /protected                 |                          | Payment-Signature: [2]    |
+  │          | 4 | server  →  ARC    |   | POST /v1/tx                    | application/octet-stream |                           | <raw tx bytes>
+  ├─ 200     | 5 | ARC     →  server |   | HTTP/1.1 200                   | application/json         |                           | { "txid": "c0d6...5a6", ... }
+  │   └─ 200 | 6 | server  →  client |   | HTTP/1.1 200 OK                | */*                      | Payment-Response: [3]     | <protected content>
+  └─ XXX     | 7 | ARC     →  server | ✗ | HTTP/1.1 XXX ...               | application/json         |                           | { "status": XXX, "title": "..." }
+      └─ 502 | 8 | server  →  client | ✗ | HTTP/1.1 502                   | application/json         |                           | { "error": "ARC broadcast failed: ..." }
 
 Key:
 
@@ -52,7 +52,7 @@ sequenceDiagram
   deactivate arc
 
   alt ARC 200 (accepted)
-    server->>client: HTTP/1.1 200 OK<br/>Payment-Response: base64(SettlementResponse JSON)<br/><protected content>
+    server->>client: HTTP/1.1 200 OK<br/>Payment-Response: base64(SettlementResponse JSON)<br/>Content-Type: */*
   else ARC error
     server->>client: HTTP/1.1 502<br/>{ "error": "ARC broadcast failed: ..." }
   end
