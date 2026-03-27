@@ -92,7 +92,10 @@ module X402
         transaction = decode_transaction(proof)
         check_txid!(transaction, proof)
         check_nonce_input!(transaction, challenge)
-        verify_payment_output!(transaction, route, challenge.payee_locking_script_hex)
+        # Verify against server's own payee, not the echoed challenge's payee.
+        # The echoed challenge is client-supplied and cannot be trusted for payee verification.
+        server_payee_hex = resolve_static_payee_hex
+        verify_payment_output!(transaction, route, server_payee_hex)
         transaction
       end
 
