@@ -170,46 +170,33 @@ module X402
       end
 
       def check_nonce_input!(transaction, challenge)
+        input = transaction.inputs[0]
+        raise VerificationError, "no inputs in transaction" unless input
+
         nonce_txid_bytes = [challenge.nonce_txid].pack("H*").reverse
+        return if input.prev_tx_id == nonce_txid_bytes && input.prev_tx_out_index == challenge.nonce_vout
 
-        found = transaction.inputs.any? do |input|
-          input.prev_tx_id == nonce_txid_bytes &&
-            input.prev_tx_out_index == challenge.nonce_vout
-        end
-
-        return if found
-
-        raise VerificationError, "nonce UTXO not spent in transaction"
+        raise VerificationError, "nonce UTXO must be at input index 0"
       end
 
-      # Profile B: verify the nonce input was signed by the server's nonce key.
-      # Extracts the pubkey from the P2PKH unlocking script and compares.
-      def verify_nonce_provenance!(transaction, _challenge)
+      # Profile B: verify the nonce input signature cryptographically.
+      # Sets source info on input 0 (required for BIP-143 sighash) and
+      # runs the full P2PKH script verification via the SDK interpreter.
+      def verify_nonce_provenance!(transaction, challenge)
         input = transaction.inputs[0]
         raise VerificationError, "nonce must be at input index 0" unless input
 
-        script_hex = input.unlocking_script&.to_hex
-        raise VerificationError, "nonce input has no unlocking script" if script_hex.nil? || script_hex.empty?
+        # BIP-143 sighash needs the source UTXO details
+        input.source_satoshis = challenge.nonce_satoshis
+        input.source_locking_script = ::BSV::Script::Script.from_hex(challenge.nonce_locking_script_hex)
 
-        # P2PKH unlocking: <sig_push> <sig_bytes> <pubkey_push> <pubkey_bytes>
-        # Extract the pubkey (last push in the script)
-        pubkey_hex = extract_pubkey_from_p2pkh_unlock(script_hex)
-        expected_hex = @nonce_key.public_key.to_hex
-
-        return if pubkey_hex == expected_hex
-
-        raise VerificationError, "nonce provenance check failed: input 0 not signed by server key"
-      end
-
-      def extract_pubkey_from_p2pkh_unlock(script_hex)
-        bytes = [script_hex].pack("H*")
-        # Skip the signature push (first byte is push length, then sig bytes)
-        sig_len = bytes[0].ord
-        # Pubkey push follows: next byte is push length, then pubkey bytes
-        pubkey_len = bytes[1 + sig_len].ord
-        bytes[(2 + sig_len), pubkey_len].unpack1("H*")
-      rescue StandardError
-        raise VerificationError, "failed to parse P2PKH unlocking script"
+        unless transaction.verify_input(0)
+          raise VerificationError, "nonce signature verification failed: input 0 not validly signed"
+        end
+      rescue VerificationError
+        raise
+      rescue StandardError => e
+        raise VerificationError, "nonce provenance check failed: #{e.message}"
       end
 
       def verify_payment_output!(transaction, route, payee_hex)
