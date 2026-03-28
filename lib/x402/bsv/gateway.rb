@@ -8,9 +8,10 @@ module X402
   module BSV
     # Base gateway class for BSV settlement schemes.
     #
-    # Builds partial transaction templates containing a payment output
-    # and an OP_RETURN request binding output. Subclasses override or
-    # extend this to add scheme-specific behaviour (nonces, headers, settlement).
+    # Builds partial transaction templates containing a payment output.
+    # The OP_RETURN request binding is NOT included in the template —
+    # it must be appended last by the client to preserve SIGHASH_SINGLE
+    # index alignment (input N → output N for each signer).
     #
     # When a wallet is provided, each challenge derives a unique payee
     # address via BRC-43 key derivation, preventing address reuse.
@@ -35,15 +36,15 @@ module X402
       # Build a partial transaction template for the given route.
       #
       # Output 0: payment (amount_sats to payee locking script)
-      # Output 1: OP_RETURN request binding (SHA-256 of method + path + query)
       #
-      # When a wallet is configured, derives a unique payee address per challenge.
-      # Returns both the transaction and the payee script hex (needed for the challenge JSON).
+      # The OP_RETURN is NOT included — the client appends it last so that
+      # SIGHASH_SINGLE index alignment is preserved (each signer's input
+      # index matches their change output index).
       #
       # @param rack_request [Rack::Request]
       # @param route [X402::Configuration::Route]
       # @return [Array(BSV::Transaction::Transaction, String)] transaction and payee script hex
-      def build_template(rack_request, route)
+      def build_template(_rack_request, route)
         tx = ::BSV::Transaction::Transaction.new
 
         # Output 0: payment (unique address if wallet configured, static otherwise)
@@ -52,14 +53,6 @@ module X402
         tx.add_output(::BSV::Transaction::TransactionOutput.new(
                         satoshis: route.amount_sats,
                         locking_script: payee_script
-                      ))
-
-        # Output 1: OP_RETURN request binding
-        binding_hash = request_binding_hash(rack_request)
-        op_return_script = build_op_return_script(binding_hash)
-        tx.add_output(::BSV::Transaction::TransactionOutput.new(
-                        satoshis: 0,
-                        locking_script: op_return_script
                       ))
 
         [tx, payee_hex]

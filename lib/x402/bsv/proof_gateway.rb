@@ -57,7 +57,8 @@ module X402
 
       private
 
-      # Build a Profile B template: nonce input (signed 0xC3) + payment + OP_RETURN.
+      # Build a Profile B template: nonce input (signed 0xC3) + payment output.
+      # The OP_RETURN is NOT included — the client appends it last.
       # Falls back to base class (Profile A) when nonce_key is nil.
       def build_proof_template(rack_request, route, nonce)
         return super(rack_request, route) unless @nonce_key
@@ -76,7 +77,7 @@ module X402
         nonce_input.source_locking_script = nonce_script
         tx.add_input(nonce_input)
 
-        # Output 0: payment (committed by 0xC3 signature)
+        # Output 0: payment (committed by 0xC3 signature on input 0)
         payee_hex = derive_payee_hex
         payee_script = ::BSV::Script::Script.from_hex(payee_hex)
         tx.add_output(::BSV::Transaction::TransactionOutput.new(
@@ -84,14 +85,7 @@ module X402
                         locking_script: payee_script
                       ))
 
-        # Output 1: OP_RETURN binding (not committed by SIGHASH_SINGLE on input 0)
-        binding_hash = request_binding_hash(rack_request)
-        tx.add_output(::BSV::Transaction::TransactionOutput.new(
-                        satoshis: 0,
-                        locking_script: build_op_return_script(binding_hash)
-                      ))
-
-        # Sign input 0 with 0xC3
+        # Sign input 0 with 0xC3 (commits to output 0 only)
         tx.sign(0, @nonce_key, NONCE_SIGHASH)
 
         [tx, payee_hex]

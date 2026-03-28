@@ -109,7 +109,7 @@ RSpec.describe X402::BSV::PayGateway do
 
       tx_binary = Base64.strict_decode64(partial_tx_b64)
       tx = BSV::Transaction::Transaction.from_binary(tx_binary)
-      expect(tx.outputs.size).to eq(2)
+      expect(tx.outputs.size).to eq(1)
       expect(tx.outputs[0].satoshis).to eq(100)
     end
   end

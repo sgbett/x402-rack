@@ -20,8 +20,8 @@ RSpec.describe X402::BSV::Gateway do
     let(:tx) { result[0] }
     let(:returned_payee_hex) { result[1] }
 
-    it "produces a transaction with exactly 2 outputs" do
-      expect(tx.outputs.size).to eq(2)
+    it "produces a transaction with exactly 1 output (payment only, no OP_RETURN)" do
+      expect(tx.outputs.size).to eq(1)
     end
 
     it "sets output 0 as the payment output with correct amount" do
@@ -33,12 +33,8 @@ RSpec.describe X402::BSV::Gateway do
       expect(tx.outputs[0].locking_script).to eq(expected_script)
     end
 
-    it "sets output 1 as an OP_RETURN" do
-      expect(tx.outputs[1].locking_script.op_return?).to be true
-    end
-
-    it "sets output 1 with 0 satoshis" do
-      expect(tx.outputs[1].satoshis).to eq(0)
+    it "does not include OP_RETURN (client appends it last)" do
+      expect(tx.outputs.none? { |o| o.locking_script.op_return? }).to be true
     end
 
     it "has no inputs" do
@@ -48,7 +44,7 @@ RSpec.describe X402::BSV::Gateway do
     it "serialises to valid binary and roundtrips" do
       binary = tx.to_binary
       restored = BSV::Transaction::Transaction.from_binary(binary)
-      expect(restored.outputs.size).to eq(2)
+      expect(restored.outputs.size).to eq(1)
       expect(restored.outputs[0].satoshis).to eq(100)
     end
   end

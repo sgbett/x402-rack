@@ -304,7 +304,7 @@ RSpec.describe X402::BSV::ProofGateway do
         )
         expect(template.inputs.size).to eq(1)
         expect(template.inputs[0].unlocking_script.to_hex).not_to be_empty
-        expect(template.outputs.size).to eq(2)
+        expect(template.outputs.size).to eq(1)
         expect(template.outputs[0].satoshis).to eq(50)
       end
 
