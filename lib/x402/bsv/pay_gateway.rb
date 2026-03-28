@@ -65,6 +65,13 @@ module X402
       def build_challenge(rack_request, route)
         template, payee_hex = build_template(rack_request, route)
 
+        # PayGateway includes OP_RETURN in the template (no fee delegation index issues)
+        binding_hash = request_binding_hash(rack_request)
+        template.add_output(::BSV::Transaction::TransactionOutput.new(
+                              satoshis: 0,
+                              locking_script: build_op_return_script(binding_hash)
+                            ))
+
         {
           "x402Version" => 2,
           "resource" => { "url" => rack_request.path_info },
