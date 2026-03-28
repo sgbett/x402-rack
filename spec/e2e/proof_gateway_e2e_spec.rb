@@ -38,6 +38,7 @@ RSpec.describe "ProofGateway e2e (Profile B)", :e2e do
 
   describe "full Profile B flow with separate wallets" do
     it "treasury mints → server challenges → client pays → server verifies" do
+      log_path = E2ELogger.start_log("proof-gateway-e2e")
       E2ELogger.header("ProofGateway Profile B — BSV Testnet E2E")
 
       E2ELogger.wallets(
@@ -174,6 +175,8 @@ RSpec.describe "ProofGateway e2e (Profile B)", :e2e do
       E2ELogger.tx("  Nonce mint", nonce[:txid])
       E2ELogger.tx("  Payment", result.txid)
     ensure
+      E2ELogger.finish_log
+      E2ELogger.emit "  Log: #{log_path}" if log_path
       X402.reset_configuration!
     end
   end
