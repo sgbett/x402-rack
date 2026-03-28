@@ -110,8 +110,8 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
 
       E2ELogger.separator
 
-      # Step 2: Client extends template (adds funding, signs with 0xC1)
-      E2ELogger.step(2, :client, "Decode template, add funding input, sign")
+      # Step 2: Client extends template (adds funding + change, signs 0xC3)
+      E2ELogger.step(2, :client, "Decode template, add funding + change, sign 0xC3")
       template = BSV::Transaction::Transaction.from_binary(
         Base64.strict_decode64(challenge_data["partial_tx_b64"])
       )
@@ -122,7 +122,7 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
         challenge_data["nonce_locking_script_hex"]
       )
 
-      # Client adds funding input manually (NOT fund_and_sign — that would also handle fees)
+      # Client adds funding input
       client_addr = client_key.public_key.address(network: :testnet)
       client_utxos = provider.fetch_utxos(client_addr)
       client_utxo = client_utxos.first
@@ -138,25 +138,21 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
       client_input.source_locking_script = client_locking_script
       template.add_input(client_input)
 
-      # Client adds their own change output (must be done BEFORE signing with 0xC1,
-      # because SIGHASH_ALL commits to all outputs — no outputs can be added after)
+      # Client adds change output (index 1, aligned with input 1 for 0xC3)
       payment_amount = route.amount_sats
-      estimated_fee = 500 # conservative estimate — delegator covers the actual fee
-      client_change = client_utxo.satoshis - payment_amount + 1 - estimated_fee # +1 for nonce input
-      if client_change > 1
-        template.add_output(BSV::Transaction::TransactionOutput.new(
-                              satoshis: client_change,
-                              locking_script: client_locking_script
-                            ))
-      end
+      client_change = client_utxo.satoshis - payment_amount + 1 # +1 for nonce
+      template.add_output(BSV::Transaction::TransactionOutput.new(
+                            satoshis: client_change,
+                            locking_script: client_locking_script
+                          ))
 
-      # Client signs their input with 0xC1 (commits to all outputs, allows more inputs)
-      client_sighash = BSV::Transaction::Sighash::ALL_FORK_ID_ANYONE_CAN_PAY
+      # Client signs input 1 with 0xC3 (commits to output 1 only — client change)
+      client_sighash = BSV::Transaction::Sighash::SINGLE_FORK_ID_ANYONE_CAN_PAY
       template.sign(1, client_key, client_sighash)
 
       E2ELogger.result("Nonce input", "index 0 (treasury, signed 0xC3)")
-      E2ELogger.result("Funding input", "index 1 (client, signed 0xC1, #{client_utxo.satoshis} sats)")
-      E2ELogger.result("Client change", "#{client_change} sats") if client_change > 1
+      E2ELogger.result("Funding input", "index 1 (client, signed 0xC3, #{client_utxo.satoshis} sats)")
+      E2ELogger.result("Client change", "output 1 (#{client_change} sats)")
       E2ELogger.result("Outputs", template.outputs.size.to_s)
 
       E2ELogger.separator
@@ -165,18 +161,31 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
       E2ELogger.step(3, :client, "Send partial tx to fee delegator")
       E2ELogger.arrow(:client, :delegator, "POST /delegate/x402")
       E2ELogger.result("Inputs before", template.inputs.size.to_s)
+      E2ELogger.result("Outputs before", template.outputs.size.to_s)
 
       fee_delegator.delegate(template, network: :testnet)
 
-      E2ELogger.arrow(:delegator, :client, "HTTP/1.1 200 OK (completed tx)")
+      E2ELogger.arrow(:delegator, :client, "HTTP/1.1 200 OK")
       E2ELogger.result("Inputs after", template.inputs.size.to_s)
-      E2ELogger.result("Fee input", "index #{template.inputs.size - 1} (delegator, signed 0xC1)")
+      E2ELogger.result("Fee input", "index 2 (delegator, signed 0xC3)")
+      E2ELogger.result("Delegator change", "output 2")
       E2ELogger.result("Outputs after", template.outputs.size.to_s)
 
       E2ELogger.separator
 
-      # Step 4: Client broadcasts
-      E2ELogger.step(4, :client, "Broadcast completed transaction")
+      # Step 4: Client appends OP_RETURN and broadcasts
+      E2ELogger.step(4, :client, "Append OP_RETURN, broadcast")
+
+      # Client adds OP_RETURN binding (unsigned, last output)
+      binding_hash = gateway.request_binding_hash(request)
+      op_return_hex = "006a047834303220#{binding_hash.unpack1("H*")}"
+      op_return_script = BSV::Script::Script.from_hex(op_return_hex)
+      template.add_output(BSV::Transaction::TransactionOutput.new(
+                            satoshis: 0,
+                            locking_script: op_return_script
+                          ))
+
+      E2ELogger.result("OP_RETURN", "output #{template.outputs.size - 1} (x402 binding, unsigned)")
       E2ELogger.arrow(:client, :arc, "POST /v1/tx (X-WaitFor: SEEN_ON_NETWORK)")
       broadcast_result = arc.broadcast(template, wait_for: "SEEN_ON_NETWORK")
       E2ELogger.arrow(:arc, :client, "HTTP/1.1 200 OK")
@@ -226,12 +235,13 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
       E2ELogger.tx("  Payment", result.txid)
       E2ELogger.emit ""
       E2ELogger.emit "  Transaction breakdown:"
-      E2ELogger.emit "    Input 0: nonce (treasury, 1 sat, signed 0xC3)"
-      E2ELogger.emit "    Input 1: funding (client, #{client_utxo.satoshis} sats, signed 0xC1)"
-      E2ELogger.emit "    Input 2: fee (delegator, signed 0xC1)"
-      E2ELogger.emit "    Output 0: payment (500 sats → payee)"
-      E2ELogger.emit "    Output 1: OP_RETURN x402 binding"
-      E2ELogger.emit "    Output 2+: change"
+      E2ELogger.emit "    Input 0: nonce (treasury, 1 sat, signed 0xC3 → output 0)"
+      E2ELogger.emit "    Input 1: funding (client, #{client_utxo.satoshis} sats, signed 0xC3 → output 1)"
+      E2ELogger.emit "    Input 2: fee (delegator, signed 0xC3 → output 2)"
+      E2ELogger.emit "    Output 0: payment (#{route.amount_sats} sats → payee)"
+      E2ELogger.emit "    Output 1: client change (#{client_change} sats)"
+      E2ELogger.emit "    Output 2: delegator change"
+      E2ELogger.emit "    Output 3: OP_RETURN x402 binding (unsigned)"
     ensure
       E2ELogger.finish_log
       E2ELogger.emit "  Log: #{log_path}" if log_path

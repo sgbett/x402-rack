@@ -1,12 +1,18 @@
 # frozen_string_literal: true
 
-# Simple fee delegator for e2e testing.
+# Fee delegator for e2e testing.
 #
-# Receives a partially-signed transaction (nonce signed by treasury,
-# client inputs signed by client), adds fee-covering inputs from its
-# own wallet, and signs only its own inputs.
+# Receives a partially-signed transaction, adds fee-covering inputs
+# with a change output, and signs only its own inputs with 0xC3.
+#
+# Signing convention:
+#   Treasury:  0xC3 (input 0 → output 0: payment)
+#   Client:    0xC3 (input 1 → output 1: client change)
+#   Delegator: 0xC3 (input 2 → output 2: delegator change)
+#   OP_RETURN: appended last by client, unsigned
 class FeeDelegator
-  DELEGATOR_SIGHASH = BSV::Transaction::Sighash::ALL_FORK_ID_ANYONE_CAN_PAY
+  # SIGHASH_SINGLE|ANYONECANPAY|FORKID — commits to own output only
+  DELEGATOR_SIGHASH = BSV::Transaction::Sighash::SINGLE_FORK_ID_ANYONE_CAN_PAY
 
   def initialize(private_key:, provider:)
     @key = private_key
@@ -16,58 +22,61 @@ class FeeDelegator
     )
   end
 
-  # Add fee inputs to a partially-signed transaction.
-  # Signs only the newly added inputs with 0xC1.
+  # Add fee input + change output, sign with 0xC3.
   #
   # @param transaction [BSV::Transaction::Transaction]
   # @param network [Symbol] :testnet or :mainnet
   # @return [BSV::Transaction::Transaction]
   def delegate(transaction, network: :testnet)
-    existing_input_count = transaction.inputs.size
+    fee_input_index = transaction.inputs.size
 
-    add_fee_inputs(transaction, network)
-    sign_new_inputs(transaction, existing_input_count)
+    add_fee_input(transaction, network)
+    add_change_output(transaction)
+    transaction.sign(fee_input_index, @key, DELEGATOR_SIGHASH)
 
     transaction
   end
 
   private
 
-  def add_fee_inputs(transaction, network)
+  def add_fee_input(transaction, network)
     address = @key.public_key.address(network: network)
     utxos = @provider.fetch_utxos(address)
+    raise "no UTXOs available for fee delegation" if utxos.empty?
 
+    # Pick the smallest UTXO that covers the estimated fee
     fee_needed = estimate_fee(transaction)
-    funded = 0
+    utxo = utxos.select { |u| u.satoshis >= fee_needed }.min_by(&:satoshis)
+    utxo ||= utxos.max_by(&:satoshis) # fallback to largest if none big enough
 
-    utxos.each do |utxo|
-      break if funded >= fee_needed
+    @selected_utxo = utxo
 
-      input = BSV::Transaction::TransactionInput.new(
-        prev_tx_id: [utxo.tx_hash].pack("H*").reverse,
-        prev_tx_out_index: utxo.tx_pos
-      )
-      input.source_satoshis = utxo.satoshis
-      input.source_locking_script = @locking_script
-      transaction.add_input(input)
-      funded += utxo.satoshis
-    end
-
-    # No change output — the delegator absorbs the excess as fee.
-    # Adding an output would invalidate the client's SIGHASH_ALL signature.
+    input = BSV::Transaction::TransactionInput.new(
+      prev_tx_id: [utxo.tx_hash].pack("H*").reverse,
+      prev_tx_out_index: utxo.tx_pos
+    )
+    input.source_satoshis = utxo.satoshis
+    input.source_locking_script = @locking_script
+    transaction.add_input(input)
   end
 
-  def sign_new_inputs(transaction, start_index)
-    (start_index...transaction.inputs.size).each do |idx|
-      transaction.sign(idx, @key, DELEGATOR_SIGHASH)
-    end
+  def add_change_output(transaction)
+    fee = estimate_fee(transaction)
+    change = @selected_utxo.satoshis - fee
+    change = 0 if change.negative?
+
+    # Change output at the same index as the fee input (for 0xC3 alignment)
+    transaction.add_output(BSV::Transaction::TransactionOutput.new(
+                             satoshis: change,
+                             locking_script: @locking_script
+                           ))
   end
 
   def estimate_fee(transaction, satoshis_per_byte: 1)
-    # Rough: each input ~148 bytes, each output ~34 bytes, overhead ~10
-    # Add 1 extra input (the fee input we're about to add) + 1 extra output (change)
+    # Each input ~148 bytes, each output ~34 bytes, overhead ~10
+    # Account for the fee input + change output + OP_RETURN we're about to add
     input_bytes = (transaction.inputs.size + 1) * 148
-    output_bytes = (transaction.outputs.size + 1) * 34
+    output_bytes = (transaction.outputs.size + 2) * 34 # +2 for change + OP_RETURN
     ((input_bytes + output_bytes + 10) * satoshis_per_byte).ceil
   end
 end
