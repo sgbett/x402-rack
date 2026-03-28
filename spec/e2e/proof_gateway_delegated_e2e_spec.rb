@@ -122,6 +122,10 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
         challenge_data["nonce_locking_script_hex"]
       )
 
+      # Pop OP_RETURN from template (preserve index alignment for 0xC3)
+      op_return_output = template.outputs.pop
+      E2ELogger.result("OP_RETURN", "popped from template (will re-append last)")
+
       # Client adds funding input
       client_addr = client_key.public_key.address(network: :testnet)
       client_utxos = provider.fetch_utxos(client_addr)
@@ -176,14 +180,8 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
       # Step 4: Client appends OP_RETURN and broadcasts
       E2ELogger.step(4, :client, "Append OP_RETURN, broadcast")
 
-      # Client adds OP_RETURN binding (unsigned, last output)
-      binding_hash = gateway.request_binding_hash(request)
-      op_return_hex = "006a047834303220#{binding_hash.unpack1("H*")}"
-      op_return_script = BSV::Script::Script.from_hex(op_return_hex)
-      template.add_output(BSV::Transaction::TransactionOutput.new(
-                            satoshis: 0,
-                            locking_script: op_return_script
-                          ))
+      # Re-append the OP_RETURN (popped from template earlier)
+      template.add_output(op_return_output)
 
       E2ELogger.result("OP_RETURN", "output #{template.outputs.size - 1} (x402 binding, unsigned)")
       E2ELogger.arrow(:client, :arc, "POST /v1/tx (X-WaitFor: SEEN_ON_NETWORK)")

@@ -57,8 +57,11 @@ module X402
 
       private
 
-      # Build a Profile B template: nonce input (signed 0xC3) + payment output.
-      # The OP_RETURN is NOT included — the client appends it last.
+      # Build a Profile B template: nonce input (signed 0xC3) + payment + OP_RETURN.
+      # The 0xC3 signature commits to output 0 (payment) only.
+      # The OP_RETURN is added AFTER signing — it's unsigned data.
+      # Delegated clients should pop the OP_RETURN before adding their change
+      # (to preserve SIGHASH_SINGLE index alignment) and re-append it last.
       # Falls back to base class (Profile A) when nonce_key is nil.
       def build_proof_template(rack_request, route, nonce)
         return super(rack_request, route) unless @nonce_key
@@ -87,6 +90,13 @@ module X402
 
         # Sign input 0 with 0xC3 (commits to output 0 only)
         tx.sign(0, @nonce_key, NONCE_SIGHASH)
+
+        # Output 1: OP_RETURN binding (added AFTER signing — unsigned)
+        binding_hash = request_binding_hash(rack_request)
+        tx.add_output(::BSV::Transaction::TransactionOutput.new(
+                        satoshis: 0,
+                        locking_script: build_op_return_script(binding_hash)
+                      ))
 
         [tx, payee_hex]
       end
