@@ -73,10 +73,10 @@ module X402
         payment = parse_payment(proof_payload)
         prefix = payment["derivationPrefix"]
         suffix = payment["derivationSuffix"]
-        consume_prefix!(prefix)
         subject_tx = parse_beef_transaction(payment["transaction"])
         expected_script = derive_payment_script(prefix, suffix, rack_request)
         verify_payment_output!(subject_tx, route, expected_script)
+        consume_prefix!(prefix)
         broadcast!(subject_tx)
         build_settlement_result(subject_tx)
       end
