@@ -302,3 +302,14 @@ The middleware itself has no dependency on `bsv-wallet` or `bsv-sdk`. Only the g
 6. **The client chooses.** Multiple challenge headers, client picks. Payment content negotiation.
 
 7. **State lives on-chain.** No server-side nonce pools, no session tracking, no balance ledgers. The blockchain is the state (with one exception: BRC-105's derivation prefix tracking, which is the BRC-100 wallet's concern).
+
+## Future: Wallet Dashboard UI
+
+A mountable Rack endpoint (e.g. `/wallet`) serving a simple web UI for the server-side wallet. Reads from the same `bsv-wallet` instance the gateways use, providing operator visibility into:
+
+- **Balances** — per-basket totals (nonces, fees, revenue)
+- **Transaction history** — recent actions with labels, status
+- **Output browser** — UTXOs by basket with tags, spendable status
+- **Certificate management** — issued/held certificates
+
+Similar pattern to Sidekiq's web UI or Rails' ActiveStorage dashboard — an optional mountable app that gives operators a window into the wallet without touching the settlement flow. The wallet gem provides the engine; this provides the dashboard. Not a user-facing wallet UI — an operator tool for monitoring and debugging the payment infrastructure.
