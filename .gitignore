@@ -10,4 +10,5 @@
 # rspec failure tracking
 .rspec_status
 .env
+.mcp.json
 spec/e2e/logs/
