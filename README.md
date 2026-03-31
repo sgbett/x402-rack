@@ -32,6 +32,12 @@ X402.configure do |config|
     X402::BSV::PayGateway.new(
       arc_url: "https://arc.taal.com",
       arc_api_key: "..."
+    ),
+    # BRC-105 gateway (BSV Association payment protocol)
+    X402::BSV::BRC105Gateway.new(
+      key_deriver: BSV::Wallet::KeyDeriver.new(server_private_key),
+      prefix_store: X402::BSV::PrefixStore::Memory.new,
+      arc_client: arc_client
     )
   ]
 
@@ -49,12 +55,13 @@ use X402::Middleware
 4. Middleware dispatches the proof to the matching gateway for settlement
 5. Gateway verifies and settles — middleware serves or rejects
 
-Two BSV settlement schemes are supported:
+Three BSV settlement schemes are supported:
 
 - **BSV-pay** (Coinbase v2 headers) — server broadcasts via ARC. No nonces, minimal infrastructure.
 - **BSV-proof** (merkleworks x402) — client broadcasts, server checks mempool. Nonce-bound, request-binding.
+- **BRC-105** (BSV Association `x-bsv-*` headers) — BRC-29 key derivation for unique payment addresses. Works standalone or composes with BRC-103 mutual authentication.
 
-Both gateways produce partial transaction templates that clients extend by adding funding inputs. See [DESIGN.md](DESIGN.md) for details.
+BSV-pay and BSV-proof produce partial transaction templates that clients extend. BRC-105 uses a different model — the client builds the entire transaction using BRC-29 derived addresses. See [DESIGN.md](DESIGN.md) for details.
 
 ## Development
 

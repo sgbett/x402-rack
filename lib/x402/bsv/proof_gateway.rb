@@ -20,7 +20,7 @@ module X402
     # - Profile A (no nonce_key): challenge includes nonce UTXO metadata only
     # - Profile B (with nonce_key): challenge includes pre-signed template with
     #   nonce input at index 0 signed with 0xC3
-    class ProofGateway < Gateway # rubocop:disable Metrics/ClassLength
+    class ProofGateway < Gateway
       NONCE_SIGHASH = ::BSV::Transaction::Sighash::SINGLE_FORK_ID_ANYONE_CAN_PAY
 
       # @param nonce_provider [#call] callable returning nonce UTXO hash

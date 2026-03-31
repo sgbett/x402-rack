@@ -12,7 +12,7 @@ module X402
     # Receipt:   Payment-Response (settlement result JSON)
     #
     # Server broadcasts via ARC. No nonces needed — ARC is the replay gate.
-    class PayGateway < Gateway # rubocop:disable Metrics/ClassLength
+    class PayGateway < Gateway
       DEFAULT_ARC_WAIT_FOR = "SEEN_ON_NETWORK"
       DEFAULT_ARC_TIMEOUT = 5
       DEFAULT_MAX_TIMEOUT_SECONDS = 60

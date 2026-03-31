@@ -54,6 +54,32 @@ At challenge time (template signing), the gateway validates that the nonce key's
 
 Payment output is verified against the server's own payee address (`resolve_static_payee_hex`), not the echoed challenge's payee. The echoed challenge is client-supplied and cannot be trusted for payee verification.
 
+## BRC105Gateway Security
+
+### BRC-29 Key Derivation
+
+Payment addresses are derived using BRC-42 with protocol ID `[2, "3241645161d8"]` and key ID `"#{prefix} #{suffix}"`. The server re-derives the expected P2PKH script at settlement — a client cannot redirect payment without knowing the server's private key.
+
+**No payTo HMAC needed** — the payment address is cryptographically bound to the server's identity key. Unlike PayGateway (where the client echoes a `payTo` address), BRC-105 clients derive the address themselves.
+
+### Prefix Store Replay Protection
+
+Each challenge issues a unique derivation prefix. The prefix is consumed atomically at settlement — after full transaction validation, before broadcast. This ordering prevents a MITM from burning a legitimate client's prefix by submitting garbage first.
+
+**Bounded store**: The in-memory store enforces a TTL (default 300s) and max capacity (default 10,000) to prevent heap exhaustion from unauthenticated challenge requests.
+
+### BRC-103 Identity Key Validation
+
+When `env['brc103.identity_key']` is present, the gateway validates it as a compressed public key hex (`/\A0[23][0-9a-fA-F]{64}\z/`) before trusting it as the BRC-29 derivation counterparty. This prevents a compromised upstream middleware from injecting the sentinel string `"anyone"` to silently downgrade mutual-auth sessions.
+
+### AtomicBEEF Parsing
+
+Transactions arrive as base64-encoded AtomicBEEF (BRC-95). Parsing is delegated to the SDK. Error messages from SDK internals are not forwarded to HTTP clients — fixed generic strings are returned instead to prevent information leakage.
+
+### No OP_RETURN Binding
+
+BRC-105 does not use OP_RETURN request binding. The payment is bound to the specific challenge via the derivation prefix (unique per request). The prefix-to-request mapping is server-side state.
+
 ## Common Security Properties
 
 ### No Keys in Middleware
@@ -67,4 +93,4 @@ The `bsv-wallet` gem (BRC-100 interface) is the security boundary. Gateways talk
 ### Error Handling
 
 - `VerificationError` with specific status codes (400, 402, 502) for expected failures
-- `StandardError` catch-all returns generic 500 (implementation detail: currently leaks `e.message` — should be made generic in production)
+- `StandardError` catch-all returns generic 500 with fixed message (no internal details leaked)

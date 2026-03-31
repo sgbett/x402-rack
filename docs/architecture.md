@@ -35,24 +35,30 @@ The boundary test: could someone write `X402::EVM::Gateway` implementing this in
 
 - **`X402::BSV::PayGateway`** — Coinbase v2 headers, server broadcasts via ARC. See [schemes/bsv-pay.md](schemes/bsv-pay.md).
 - **`X402::BSV::ProofGateway`** — merkleworks headers, client broadcasts, server checks mempool. See [schemes/bsv-proof.md](schemes/bsv-proof.md).
+- **`X402::BSV::BRC105Gateway`** — BSV Association `x-bsv-*` headers, BRC-29 derived addresses, AtomicBEEF transactions. See [schemes/brc-105.md](schemes/brc-105.md).
 
 ## Payment Content Negotiation
 
 Different x402 ecosystems use different HTTP headers. A server can send **multiple challenge headers** simultaneously — the client picks the one it can satisfy.
 
-| Scheme | Challenge header | Proof header | Receipt header |
-|--------|-----------------|--------------|----------------|
+| Scheme | Challenge headers | Proof header | Receipt header |
+|--------|------------------|--------------|----------------|
 | BSV-pay (ours) | `Payment-Required` | `Payment-Signature` | `Payment-Response` |
 | BSV-proof (merkleworks) | `X402-Challenge` | `X402-Proof` | — |
+| BRC-105 (BSV Association) | `x-bsv-payment-satoshis-required`, `x-bsv-payment-derivation-prefix`, `x-bsv-payment-identity-key`* | `x-bsv-payment` | `x-bsv-payment-result` |
+
+\* `x-bsv-payment-identity-key` is omitted when BRC-103 middleware is present upstream.
 
 Header namespaces are reserved per ecosystem:
 - `Payment-*` — Coinbase v2 / our PayGateway
 - `X402-*` — merkleworks / our ProofGateway
-- `x-bsv-*` — BRC-105 / BSV Association (future)
+- `x-bsv-*` — BRC-105 / BSV Association (our BRC105Gateway)
 
-## Unified Template Model
+## Transaction Models
 
-Both gateways produce **partial transaction templates** that the client extends by adding funding inputs (and optionally change outputs).
+### Template-based (PayGateway, ProofGateway)
+
+Both template-based gateways produce **partial transaction templates** that the client extends by adding funding inputs (and optionally change outputs).
 
 **Base behaviour** (`X402::BSV::Gateway`): build a partial tx with the payment output (amount to payee) and an OP_RETURN request binding output.
 
@@ -60,7 +66,18 @@ Both gateways produce **partial transaction templates** that the client extends 
 
 **PayGateway**: inherits the base behaviour. Payment output + OP_RETURN binding, no nonce.
 
-The client's job is identical regardless of scheme: add funding inputs, sign, and either broadcast (BSV-proof) or hand to the server (BSV-pay).
+The client's job is identical for template-based gateways: add funding inputs, sign, and either broadcast (BSV-proof) or hand to the server (BSV-pay).
+
+### Derivation-based (BRC105Gateway)
+
+BRC105Gateway uses a fundamentally different approach — **no partial transaction template**. Instead:
+
+1. The server advertises a derivation prefix (random nonce) and its identity key
+2. The client derives a unique payment address using BRC-29 (BRC-42 key derivation with protocol ID `[2, "3241645161d8"]` and key ID `"#{prefix} #{suffix}"`)
+3. The client builds the entire transaction independently, paying to the derived address
+4. The server re-derives the expected address and verifies the payment output
+
+This eliminates the need for OP_RETURN binding, payTo HMAC, or any shared transaction state. BRC105Gateway does not inherit from `Gateway` — it uses composition via `KeyDeriver`.
 
 ### Request Binding via OP_RETURN
 

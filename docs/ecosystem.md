@@ -47,17 +47,31 @@ Our PayGateway implements the Coinbase v2 header spec with BSV as the settlement
 
 We also support merkleworks via a separate ProofGateway that uses the `X402-*` headers.
 
+Our BRC105Gateway implements the BSV Association's native payment protocol using `x-bsv-*` headers, enabling interoperability with BRC-100 wallets and the broader BSV ecosystem tooling.
+
 Coinbase will likely gatekeep BSV from their ecosystem — our conformance is about making it easy for others to integrate BSV as a supported network.
 
-## BRC-105 Without Auth
+## BRC-105: Standalone and Authenticated Modes
 
-BRC-105 assumes BRC-103/104 mutual authentication, but the payment mechanism can work without it:
+BRC-105 assumes BRC-103/104 mutual authentication, but `BRC105Gateway` supports both modes:
 
-- The derivation prefix nonce doesn't require identity — just a unique prefix per challenge
-- Transport security is handled by TLS (BRC-104 itself says it "does not replace TLS")
-- The server can use its own fixed public key for derivation without a BRC-103 handshake
+### Standalone mode (no BRC-103)
 
-A future `X402::BSV::BRC105Gateway` could operate in "no-auth" mode, reading `env['brc103.identity_key']` if present (enriched path) or using its own key if not (anonymous path).
+The gateway advertises its identity key in the `x-bsv-payment-identity-key` challenge header. The client uses this for BRC-29 key derivation. Counterparty is `"anyone"` — anonymous payments similar to PayGateway but using BSV-native headers.
+
+- No handshake required
+- Transport security handled by TLS
+- Replay protection via server-tracked derivation prefixes
+
+### Authenticated mode (with BRC-103 middleware)
+
+When BRC-103 middleware is present upstream in the Rack stack, the gateway reads the client's authenticated identity key from `env['brc103.identity_key']` and uses it as the BRC-29 derivation counterparty. The identity key challenge header is omitted (the client already has the server's key from the BRC-103 handshake).
+
+- Full BRC-105 compliance
+- Payment bound to authenticated identity
+- Stronger replay protection (session nonces + prefix tracking)
+
+The gateway detects the mode automatically — no configuration change required. This allows composing `BRC103Middleware + BRC105Gateway` for the full authenticated flow, or using `BRC105Gateway` alone for the simpler anonymous path.
 
 ## Related Projects
 

@@ -251,6 +251,79 @@ RSpec.describe X402::Middleware do
     end
   end
 
+  describe "BRC-105 gateway integration" do
+    let(:brc105_gateway) do
+      gw = Object.new
+
+      def gw.challenge_headers(_request, _route)
+        {
+          "x-bsv-payment-satoshis-required" => "1000",
+          "x-bsv-payment-derivation-prefix" => "abc123",
+          "x-bsv-payment-identity-key" => "02#{"ff" * 32}"
+        }
+      end
+
+      def gw.proof_header_names
+        ["x-bsv-payment"]
+      end
+
+      settlement_result = X402::SettlementResult.new(
+        receipt_headers: { "x-bsv-payment-result" => "eyJzdWNjZXNzIjp0cnVlfQ" },
+        txid: "cc" * 32,
+        network: "bsv:mainnet"
+      )
+
+      gw.define_singleton_method(:settle!) do |_header_name, _proof, _request, _route|
+        settlement_result
+      end
+
+      gw
+    end
+
+    it "includes x-bsv-* challenge headers alongside other gateway headers" do
+      X402.reset_configuration!
+      X402.configure do |c|
+        c.domain = "api.example.com"
+        c.payee_locking_script_hex = "76a914#{"aa" * 20}88ac"
+        c.gateways = [mock_gateway, pay_gateway, brc105_gateway]
+        c.protect(method: "GET", path: "/premium", amount_sats: 50)
+      end
+
+      env = Rack::MockRequest.env_for("/premium", method: "GET")
+      status, headers, = app.call(env)
+
+      expect(status).to eq(402)
+      expect(headers["x402-challenge"]).not_to be_nil
+      expect(headers["payment-required"]).not_to be_nil
+      expect(headers["x-bsv-payment-satoshis-required"]).to eq("1000")
+      expect(headers["x-bsv-payment-derivation-prefix"]).to eq("abc123")
+      expect(headers["x-bsv-payment-identity-key"]).not_to be_nil
+    end
+
+    it "dispatches to BRC105Gateway when x-bsv-payment header is present" do
+      X402.reset_configuration!
+      X402.configure do |c|
+        c.domain = "api.example.com"
+        c.payee_locking_script_hex = "76a914#{"aa" * 20}88ac"
+        c.gateways = [mock_gateway, pay_gateway, brc105_gateway]
+        c.protect(method: "GET", path: "/premium", amount_sats: 50)
+      end
+
+      env = Rack::MockRequest.env_for("/premium", method: "GET")
+      env["HTTP_X_BSV_PAYMENT"] = '{"derivationPrefix":"abc","derivationSuffix":"def","transaction":"..."}'
+
+      status, headers, body = app.call(env)
+      expect(status).to eq(200)
+      expect(body).to eq(["OK"])
+      expect(headers["x-bsv-payment-result"]).to eq("eyJzdWNjZXNzIjp0cnVlfQ")
+    end
+
+    it "has no proof header collision with Pay/Proof gateways" do
+      proof_headers = [mock_gateway, pay_gateway, brc105_gateway].flat_map(&:proof_header_names)
+      expect(proof_headers).to eq(proof_headers.uniq)
+    end
+  end
+
   describe "boundary test" do
     it "works with any object implementing the gateway interface" do
       custom_gw = Class.new do
