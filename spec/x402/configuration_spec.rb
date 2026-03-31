@@ -433,7 +433,15 @@ RSpec.describe X402::Configuration do
     end
 
     context "gateways= takes precedence" do
-      it "ignores gateway_specs when gateways is non-empty" do
+      it "ignores gateway_specs when gateways is set before enable" do
+        config.gateways = [mock_gateway]
+        config.enable :pay_gateway
+        config.validate!
+
+        expect(config.gateways).to eq([mock_gateway])
+      end
+
+      it "ignores gateway_specs when gateways is set after enable" do
         config.enable :pay_gateway
         config.gateways = [mock_gateway]
         config.validate!

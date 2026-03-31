@@ -41,7 +41,7 @@ X402.configure do |config|
   # Enable gateways — constructed automatically from shared deps
   config.enable :pay_gateway
   config.enable :proof_gateway, nonce_provider: my_nonce_provider
-  config.enable :brc105_gateway, server_wif: ENV["SERVER_WIF"]
+  config.enable :brc105_gateway, server_wif: "L3..."
 
   config.protect method: :GET, path: "/api/expensive", amount_sats: 100
 end

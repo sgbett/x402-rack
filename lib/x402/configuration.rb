@@ -55,7 +55,9 @@ module X402
     # @return [BSV::Network::ARC]
     # @raise [ConfigurationError] if +arc_url+ is nil and no +arc_client+ injected
     def shared_arc_client
-      @shared_arc_client ||= arc_client || build_arc_client
+      return @arc_client if @arc_client
+
+      @shared_arc_client ||= build_arc_client
     end
 
     # Register a protected route.
