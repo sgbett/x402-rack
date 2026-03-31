@@ -40,7 +40,11 @@ module X402
       # @return [Hash] challenge headers (x-bsv-* namespace)
       def challenge_headers(rack_request, route)
         prefix = SecureRandom.hex(16)
-        @prefix_store.store!(prefix)
+        begin
+          @prefix_store.store!(prefix)
+        rescue PrefixStore::StoreFullError
+          raise VerificationError.new("server at capacity — try again later", status: 503)
+        end
 
         headers = {
           "x-bsv-payment-satoshis-required" => route.amount_sats.to_s,
@@ -48,7 +52,7 @@ module X402
         }
 
         # Include identity key only in standalone mode (no BRC-103 present)
-        headers["x-bsv-payment-identity-key"] = @key_deriver.identity_key unless valid_brc103_key?(rack_request)
+        headers["x-bsv-payment-identity-key"] = @key_deriver.identity_key unless validated_brc103_key(rack_request)
 
         headers
       end
@@ -125,17 +129,14 @@ module X402
       end
 
       def resolve_counterparty(rack_request)
-        brc103_key = rack_request.env["brc103.identity_key"]
-        if brc103_key.is_a?(String) && brc103_key.match?(COMPRESSED_PUBKEY_HEX)
-          brc103_key
-        else
-          "anyone"
-        end
+        validated_brc103_key(rack_request) || "anyone"
       end
 
-      def valid_brc103_key?(rack_request)
-        brc103_key = rack_request.env["brc103.identity_key"]
-        brc103_key.is_a?(String) && brc103_key.match?(COMPRESSED_PUBKEY_HEX)
+      # Returns the validated BRC-103 identity key from the Rack env, or nil
+      # if absent or not a valid compressed public key hex.
+      def validated_brc103_key(rack_request)
+        key = rack_request.env["brc103.identity_key"]
+        key if key.is_a?(String) && key.match?(COMPRESSED_PUBKEY_HEX)
       end
 
       def verify_payment_output!(transaction, route, expected_script)

@@ -3,26 +3,26 @@
 ## Sequence (Standalone Mode)
 
 ```
- Flow        | N | From    -> To      |   | HTTP                           | x-bsv Headers                                    | Body
+ Flow        | N | From    →  To      |   | HTTP                           | x-bsv Headers                                    | Body
 -------------|---|-------------------|---|--------------------------------|-------------------------------------------------|-----------------------------
-  |          | 1 | client  ->  server |   | GET /protected                 |                                                  |
- 402         | 2 | server  ->  client | ! | HTTP/1.1 402 Payment Required  | x-bsv-payment-satoshis-required: 100             | { "error": "Payment Required" }
-  |          |   |                    |   |                                | x-bsv-payment-derivation-prefix: a1b2...         |
-  |          |   |                    |   |                                | x-bsv-payment-identity-key: 02ab...cd            |
-  |          | 3 | client  ->  server |   | GET /protected                 | x-bsv-payment: [1]                               |
-  |          | 4 | server  ->  ARC    |   | POST /v1/tx                    |                                                  | <raw tx bytes>
-  +-- 200    | 5 | ARC     ->  server |   | HTTP/1.1 200                   |                                                  | { "txid": "...", ... }
-  |   +-- 200| 6 | server  ->  client |   | HTTP/1.1 200 OK                | x-bsv-payment-result: [2]                        | <protected content>
-  +-- XXX    | 7 | ARC     ->  server | X | HTTP/1.1 XXX ...               |                                                  | { "status": XXX, ... }
-      +-- 502| 8 | server  ->  client | X | HTTP/1.1 502                   |                                                  | { "error": "ARC broadcast failed" }
+  │          | 1 | client  →  server |   | GET /protected                 |                                                  |
+ 402         | 2 | server  →  client | ⚠ | HTTP/1.1 402 Payment Required  | x-bsv-payment-satoshis-required: 100             | { "error": "Payment Required" }
+  │          |   |                    |   |                                | x-bsv-payment-derivation-prefix: a1b2...         |
+  │          |   |                    |   |                                | x-bsv-payment-identity-key: 02ab...cd            |
+  │          | 3 | client  →  server |   | GET /protected                 | x-bsv-payment: [1]                               |
+  │          | 4 | server  →  ARC    |   | POST /v1/tx                    |                                                  | <raw tx bytes>
+  ├─ 200     | 5 | ARC     →  server |   | HTTP/1.1 200                   |                                                  | { "txid": "...", ... }
+  │   └─ 200 | 6 | server  →  client |   | HTTP/1.1 200 OK                | x-bsv-payment-result: [2]                        | <protected content>
+  └─ XXX     | 7 | ARC     →  server | ✗ | HTTP/1.1 XXX ...               |                                                  | { "status": XXX, ... }
+      └─ 502 | 8 | server  →  client | ✗ | HTTP/1.1 502                   |                                                  | { "error": "ARC broadcast failed" }
 
 Key:
 
 [1] JSON: { "derivationPrefix": "a1b2...", "derivationSuffix": "f7e8...", "transaction": "<base64 AtomicBEEF>" }
 [2] base64(JSON: { "success": true, "transaction": "<txid>", "network": "bsv:mainnet" })
 
-! Expected (402 Challenge)
-X ARC rejection
+⚠ Expected (402 Challenge)
+✗ ARC rejection
 ```
 
 ## Sequence Diagram (Standalone Mode)

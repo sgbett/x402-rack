@@ -55,6 +55,18 @@ RSpec.describe X402::BSV::BRC105Gateway do
       end
     end
 
+    context "when prefix store is full" do
+      let(:full_store) { X402::BSV::PrefixStore::Memory.new(max_issued: 0) }
+      let(:full_gateway) do
+        described_class.new(key_deriver: key_deriver, prefix_store: full_store, arc_client: arc_client)
+      end
+
+      it "raises VerificationError with 503" do
+        expect { full_gateway.challenge_headers(mock_request, route) }
+          .to raise_error(X402::VerificationError, /at capacity/) { |e| expect(e.status).to eq(503) }
+      end
+    end
+
     context "with BRC-103 identity key in env" do
       let(:request) { mock_request("brc103.identity_key" => "02#{"cd" * 32}") }
       let(:headers) { gateway.challenge_headers(request, route) }
