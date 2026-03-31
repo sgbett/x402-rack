@@ -10,13 +10,16 @@ The middleware is a pure dispatcher — no blockchain knowledge, no keys. Gatewa
 
 ## Settlement Schemes
 
-Two BSV payment schemes, both producing partial transaction templates:
+Three BSV payment schemes:
 
 - **BSV-pay** — server broadcasts via ARC. Coinbase v2 headers. Minimal infrastructure.
   → [docs/schemes/bsv-pay.md](docs/schemes/bsv-pay.md)
 
 - **BSV-proof** — client broadcasts, server checks mempool. Merkleworks headers. Nonce-bound.
   → [docs/schemes/bsv-proof.md](docs/schemes/bsv-proof.md)
+
+- **BRC-105** — BRC-29 derived addresses, AtomicBEEF transactions. BSV Association headers. Optional BRC-103 auth.
+  → [docs/schemes/brc-105.md](docs/schemes/brc-105.md)
 
 ## Security
 
@@ -46,3 +49,4 @@ bsv-x402, BRC-100/CWI, BSV Browser, retry logic, fee delegation.
 
 - **PayGateway**: [docs/process-flow/pay-gateway.md](docs/process-flow/pay-gateway.md)
 - **ProofGateway**: [docs/process-flow/proof-gateway.md](docs/process-flow/proof-gateway.md)
+- **BRC105Gateway**: [docs/process-flow/brc105-gateway.md](docs/process-flow/brc105-gateway.md)

@@ -46,6 +46,20 @@ The planned integration path:
 
 ## Client Behaviour by Scheme
 
+### BRC105Gateway (BRC-105)
+
+1. Client receives `x-bsv-payment-satoshis-required`, `x-bsv-payment-derivation-prefix`, and `x-bsv-payment-identity-key` headers
+2. Client chooses a random derivation suffix
+3. Derives payment address using BRC-29: `KeyDeriver.derive_public_key([2, "3241645161d8"], "#{prefix} #{suffix}", server_identity_key)`
+4. Builds a transaction paying to the derived P2PKH address
+5. Encodes the transaction as AtomicBEEF (BRC-95), base64
+6. Sends `x-bsv-payment` header with JSON: `{ "derivationPrefix": "...", "derivationSuffix": "...", "transaction": "<base64 AtomicBEEF>" }`
+7. Server verifies derivation, broadcasts via ARC, returns `x-bsv-payment-result`
+
+**BRC-103 authenticated mode**: the client already has the server's identity key from the BRC-103 handshake — the `x-bsv-payment-identity-key` header is omitted. The client's authenticated identity key is used as the BRC-29 counterparty, binding the payment to the mutual-auth session.
+
+**BRC-100 wallet integration**: BRC-105 clients can use `wallet.createAction()` to build the transaction and `wallet.internalizeAction()` on the server to process it. The derivation prefix/suffix flow integrates natively with BRC-100's payment handling.
+
 ### PayGateway (BSV-pay)
 
 1. Client receives `Payment-Required` header
