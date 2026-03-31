@@ -22,6 +22,7 @@ module X402
       PROTOCOL_ID = [2, "3241645161d8"].freeze
       PROOF_HEADER = "x-bsv-payment"
       NETWORK = "bsv:mainnet"
+      COMPRESSED_PUBKEY_HEX = /\A0[23][0-9a-fA-F]{64}\z/
 
       # @param key_deriver [BSV::Wallet::KeyDeriver] provides identity key + BRC-42 derivation
       # @param prefix_store [#store!, #valid?, #consume!] replay protection for derivation prefixes
@@ -47,10 +48,7 @@ module X402
         }
 
         # Include identity key only in standalone mode (no BRC-103 present)
-        brc103_key = rack_request.env["brc103.identity_key"]
-        unless brc103_key.is_a?(String) && !brc103_key.empty?
-          headers["x-bsv-payment-identity-key"] = @key_deriver.identity_key
-        end
+        headers["x-bsv-payment-identity-key"] = @key_deriver.identity_key unless valid_brc103_key?(rack_request)
 
         headers
       end
@@ -73,6 +71,7 @@ module X402
         payment = parse_payment(proof_payload)
         prefix = payment["derivationPrefix"]
         suffix = payment["derivationSuffix"]
+        validate_prefix_and_suffix!(prefix, suffix)
         subject_tx = parse_beef_transaction(payment["transaction"])
         expected_script = derive_payment_script(prefix, suffix, rack_request)
         verify_payment_output!(subject_tx, route, expected_script)
@@ -85,8 +84,13 @@ module X402
 
       def parse_payment(proof_payload)
         JSON.parse(proof_payload)
-      rescue JSON::ParserError => e
-        raise VerificationError.new("invalid payment JSON: #{e.message}", status: 400)
+      rescue JSON::ParserError
+        raise VerificationError.new("invalid payment JSON", status: 400)
+      end
+
+      def validate_prefix_and_suffix!(prefix, suffix)
+        raise VerificationError.new("missing derivationPrefix", status: 400) if prefix.nil? || prefix.empty?
+        raise VerificationError.new("missing derivationSuffix", status: 400) if suffix.nil? || suffix.empty?
       end
 
       def consume_prefix!(prefix)
@@ -104,12 +108,12 @@ module X402
         raise VerificationError.new("no subject transaction in BEEF bundle", status: 400) unless subject_tx
 
         subject_tx
-      rescue ArgumentError => e
-        raise VerificationError.new("invalid base64: #{e.message}", status: 400)
+      rescue ArgumentError
+        raise VerificationError.new("invalid base64 in transaction", status: 400)
       rescue VerificationError
         raise
-      rescue StandardError => e
-        raise VerificationError.new("failed to parse BEEF: #{e.message}", status: 400)
+      rescue StandardError
+        raise VerificationError.new("failed to parse BEEF transaction", status: 400)
       end
 
       def derive_payment_script(prefix, suffix, rack_request)
@@ -122,11 +126,16 @@ module X402
 
       def resolve_counterparty(rack_request)
         brc103_key = rack_request.env["brc103.identity_key"]
-        if brc103_key.is_a?(String) && !brc103_key.empty?
+        if brc103_key.is_a?(String) && brc103_key.match?(COMPRESSED_PUBKEY_HEX)
           brc103_key
         else
           "anyone"
         end
+      end
+
+      def valid_brc103_key?(rack_request)
+        brc103_key = rack_request.env["brc103.identity_key"]
+        brc103_key.is_a?(String) && brc103_key.match?(COMPRESSED_PUBKEY_HEX)
       end
 
       def verify_payment_output!(transaction, route, expected_script)
@@ -140,8 +149,8 @@ module X402
 
       def broadcast!(transaction)
         @arc_client.broadcast(transaction)
-      rescue StandardError => e
-        raise VerificationError.new("ARC broadcast failed: #{e.message}", status: 502)
+      rescue StandardError
+        raise VerificationError.new("ARC broadcast failed", status: 502)
       end
 
       def build_settlement_result(transaction)

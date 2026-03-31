@@ -88,6 +88,24 @@ RSpec.describe X402::BSV::BRC105Gateway do
         expect(headers).to include("x-bsv-payment-identity-key")
       end
     end
+
+    context "with invalid brc103.identity_key (not a compressed pubkey)" do
+      let(:request) { mock_request("brc103.identity_key" => "anyone") }
+      let(:headers) { gateway.challenge_headers(request, route) }
+
+      it "falls back to standalone mode" do
+        expect(headers).to include("x-bsv-payment-identity-key")
+      end
+    end
+
+    context "with non-hex brc103.identity_key" do
+      let(:request) { mock_request("brc103.identity_key" => "not-a-pubkey") }
+      let(:headers) { gateway.challenge_headers(request, route) }
+
+      it "falls back to standalone mode" do
+        expect(headers).to include("x-bsv-payment-identity-key")
+      end
+    end
   end
 
   describe "#proof_header_names" do
@@ -221,6 +239,31 @@ RSpec.describe X402::BSV::BRC105Gateway do
       it "raises VerificationError (400)" do
         expect { real_gateway.settle!("x-bsv-payment", "not{json", request, route) }
           .to raise_error(X402::VerificationError, /invalid payment JSON/) { |e| expect(e.status).to eq(400) }
+      end
+    end
+
+    context "missing derivationSuffix" do
+      it "raises VerificationError (400) for nil suffix" do
+        payload = JSON.generate({ "derivationPrefix" => prefix, "transaction" => "AA==" })
+
+        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /missing derivationSuffix/) { |e| expect(e.status).to eq(400) }
+      end
+
+      it "raises VerificationError (400) for empty suffix" do
+        payload = JSON.generate({ "derivationPrefix" => prefix, "derivationSuffix" => "", "transaction" => "AA==" })
+
+        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /missing derivationSuffix/) { |e| expect(e.status).to eq(400) }
+      end
+    end
+
+    context "missing derivationPrefix" do
+      it "raises VerificationError (400)" do
+        payload = JSON.generate({ "derivationSuffix" => suffix, "transaction" => "AA==" })
+
+        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /missing derivationPrefix/) { |e| expect(e.status).to eq(400) }
       end
     end
 

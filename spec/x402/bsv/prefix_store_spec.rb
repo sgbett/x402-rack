@@ -50,4 +50,43 @@ RSpec.describe X402::BSV::PrefixStore::Memory do
       expect(results.count(false)).to eq(9)
     end
   end
+
+  describe "TTL expiry" do
+    subject(:store) { described_class.new(ttl: 1) }
+
+    it "expires prefixes after TTL" do
+      store.store!(prefix)
+      expect(store.valid?(prefix)).to be true
+
+      sleep 1.1
+      expect(store.valid?(prefix)).to be false
+      expect(store.consume!(prefix)).to be false
+    end
+  end
+
+  describe "max_issued cap" do
+    subject(:store) { described_class.new(max_issued: 3) }
+
+    it "raises StoreFullError when capacity is reached" do
+      3.times { |i| store.store!("prefix-#{i}") }
+
+      expect { store.store!("prefix-3") }
+        .to raise_error(X402::BSV::PrefixStore::StoreFullError, /at capacity/)
+    end
+
+    it "allows new prefixes after consuming existing ones" do
+      3.times { |i| store.store!("prefix-#{i}") }
+      store.consume!("prefix-0")
+
+      expect { store.store!("prefix-3") }.not_to raise_error
+    end
+
+    it "allows new prefixes after expiry frees capacity" do
+      capped_store = described_class.new(max_issued: 2, ttl: 1)
+      2.times { |i| capped_store.store!("prefix-#{i}") }
+
+      sleep 1.1
+      expect { capped_store.store!("prefix-2") }.not_to raise_error
+    end
+  end
 end
