@@ -12,8 +12,8 @@ module X402
     ].freeze
 
     PROOF_GATEWAY_KNOWN_OPTS = %i[
-      arc_client payee_locking_script_hex nonce_provider nonce_key
-      nonce_wif wallet challenge_secret
+      arc_client payee_locking_script_hex nonce_provider
+      wallet challenge_secret
     ].freeze
 
     BRC105_GATEWAY_KNOWN_OPTS = %i[
@@ -151,24 +151,14 @@ module X402
       klass.new(**opts)
     end
 
-    def build_proof_gateway(klass, options) # rubocop:disable Metrics/PerceivedComplexity
+    def build_proof_gateway(klass, options)
       reject_unknown_options!(:proof_gateway, options, PROOF_GATEWAY_KNOWN_OPTS)
 
       raise ConfigurationError, "proof_gateway requires nonce_provider:" unless options.key?(:nonce_provider)
 
-      if options.key?(:nonce_wif) && options.key?(:nonce_key)
-        raise ConfigurationError, "proof_gateway: nonce_wif: and nonce_key: are mutually exclusive"
-      end
-
       opts = { arc_client: options[:arc_client] || shared_arc_client,
                payee_locking_script_hex: options[:payee_locking_script_hex] || payee_locking_script_hex,
                nonce_provider: options[:nonce_provider] }
-
-      if options.key?(:nonce_wif)
-        opts[:nonce_key] = ::BSV::Primitives::PrivateKey.from_wif(options[:nonce_wif])
-      elsif options.key?(:nonce_key)
-        opts[:nonce_key] = options[:nonce_key]
-      end
 
       %i[wallet challenge_secret].each do |key|
         opts[key] = options[key] if options.key?(key)

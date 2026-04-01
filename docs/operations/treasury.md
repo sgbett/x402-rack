@@ -12,7 +12,7 @@ The treasury creates 1-sat P2PKH outputs locked to the nonce key. Each output be
 
 When the ProofGateway builds a challenge, it requests a nonce from the treasury (via the `nonce_provider` callable). The nonce UTXO details (txid, vout, satoshis, locking_script_hex) are included in the challenge.
 
-In Profile B, the gateway signs the nonce input with `0xC3` and includes the pre-signed template in the challenge.
+In Profile B, the treasury signs the nonce input with `0xC3` and returns the pre-signed template (as `partial_tx` binary) to the gateway. The gateway appends the OP_RETURN and includes the template in the challenge.
 
 ### Spending
 
@@ -51,11 +51,19 @@ The treasury is not on the critical path for settlement — it only participates
 
 ## Current Implementation
 
-The `nonce_provider` is currently a raw callable injected into ProofGateway:
+The `nonce_provider` is a callable injected into ProofGateway. It receives `payee:` and `amount:` kwargs so the treasury can build the template:
 
 ```ruby
-nonce_provider = ->(request) {
+# Profile A — bare UTXO metadata
+nonce_provider = ->(request, payee:, amount:) {
   { txid: "...", vout: 0, satoshis: 1, locking_script_hex: "76a914...88ac" }
+}
+
+# Profile B — treasury builds and signs the template
+nonce_provider = ->(request, payee:, amount:) {
+  tx = build_and_sign_template(payee: payee, amount: amount)
+  { txid: "...", vout: 0, satoshis: 1, locking_script_hex: "76a914...88ac",
+    partial_tx: tx.to_binary }
 }
 ```
 

@@ -69,8 +69,7 @@ config.gateways = [
   X402::BSV::PayGateway.new(arc_client: arc),
   X402::BSV::ProofGateway.new(
     nonce_provider: treasury,
-    arc_client: arc,
-    nonce_key: nonce_key
+    arc_client: arc
   )
 ]
 ```

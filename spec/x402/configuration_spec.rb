@@ -274,7 +274,7 @@ RSpec.describe X402::Configuration do
 
   describe "gateway construction (build phase)" do
     let(:arc_double) { instance_double("BSV::Network::ARC") }
-    let(:nonce_provider) { ->(_req, _route) { { txid: "abc", vout: 0, satoshis: 100 } } }
+    let(:nonce_provider) { ->(_req, **) { { txid: "abc", vout: 0, satoshis: 100 } } }
 
     before do
       config.domain = "example.com"
@@ -336,25 +336,6 @@ RSpec.describe X402::Configuration do
         config.enable :proof_gateway
         expect { config.validate! }.to raise_error(
           X402::ConfigurationError, /nonce_provider/
-        )
-      end
-
-      it "expands nonce_wif to nonce_key" do
-        private_key = instance_double("BSV::Primitives::PrivateKey")
-        allow(BSV::Primitives::PrivateKey).to receive(:from_wif)
-          .with("L3nonce")
-          .and_return(private_key)
-
-        config.enable :proof_gateway, nonce_provider: nonce_provider, nonce_wif: "L3nonce"
-        config.validate!
-
-        expect(config.gateways.first).to be_a(X402::BSV::ProofGateway)
-      end
-
-      it "raises when both nonce_wif and nonce_key are provided" do
-        config.enable :proof_gateway, nonce_provider: nonce_provider, nonce_wif: "L3x", nonce_key: :key
-        expect { config.validate! }.to raise_error(
-          X402::ConfigurationError, /nonce_wif.*nonce_key.*mutually exclusive/
         )
       end
 

@@ -81,7 +81,7 @@ sequenceDiagram
 ## Notes
 
 - **Client broadcasts, not server** — broadcasting is settlement, not authorisation. Keeps the server stateless (per Rui at merkleworks).
-- **Profile B template** — the challenge includes a pre-signed template (`partial_tx_b64`) with the nonce input at index 0 signed with `0xC3`. The client extends it by appending funding inputs.
+- **Profile B template** — the treasury (via `nonce_provider`) builds and signs the template. The gateway appends the OP_RETURN and includes it in the challenge as `partial_tx_b64`. The nonce input at index 0 is signed with `0xC3`. The client extends it by appending funding inputs.
 - **0xC3 sighash** — `SIGHASH_SINGLE | ANYONECANPAY | FORKID` commits to output 0 (payment) while allowing additional inputs and outputs. See [architecture.md](../architecture.md#why-0xc3-for-the-nonce-signature).
 - **Fee delegation is optional** — shown as `opt` in the diagram. Most clients can fund their own fees (1-50 sats). The delegator adds fee inputs and signs only those.
 - **Client signs with 0xC1** — `SIGHASH_ALL | ANYONECANPAY | FORKID` on funding inputs. Commits to all outputs but allows the delegator to append fee inputs.
