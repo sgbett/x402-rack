@@ -11,21 +11,23 @@ Client broadcasts, server checks mempool. Proof-of-payment model. Nonce-bound wi
 
 ## Profiles
 
-### Profile A (no nonce key)
+### Profile A (no partial template)
 
 The challenge includes nonce UTXO metadata only. The client must construct the entire transaction including the nonce input. No cryptographic proof of nonce provenance.
 
 Suitable for deployments using an external treasury service that returns bare UTXO references.
 
-### Profile B (with nonce key) — recommended
+### Profile B (treasury-signed template) — recommended
 
-The gateway holds a nonce key and produces a **pre-signed template**:
+The **treasury** (via the `nonce_provider` callable) builds and signs a partial template. The gateway receives it and appends the OP_RETURN request binding:
 
 - Input 0: nonce UTXO, signed with `SIGHASH_SINGLE | ANYONECANPAY | FORKID` (`0xC3`)
-- Output 0: payment (committed by the signature)
-- Output 1: OP_RETURN binding (appendable)
+- Output 0: payment (committed by the treasury's signature)
+- Output 1: OP_RETURN binding (appended by the gateway after receiving the template)
 
-The client extends the template by adding funding inputs. The `0xC3` signature proves the server issued the nonce — this is the provenance guarantee.
+The gateway never holds a private key. Profile B is detected from the presence of `partial_tx` in the provider response.
+
+The client extends the template by adding funding inputs. The `0xC3` signature proves the treasury issued the nonce — this is the provenance guarantee.
 
 The template is included in the challenge as `partial_tx_b64` (base64-encoded), excluded from the canonical challenge hash (merkleworks spec compliance).
 
@@ -79,7 +81,29 @@ Per Rui at merkleworks: broadcasting is settlement, not authorisation. If the se
 
 See [operations/treasury.md](../operations/treasury.md) for nonce lifecycle.
 
+## Nonce Provider Interface
+
+The `nonce_provider` is a callable that receives `(rack_request, payee:, amount:)` and returns a hash:
+
+```ruby
+# Profile A — bare UTXO metadata
+provider = ->(request, payee:, amount:) {
+  { txid: "...", vout: 0, satoshis: 1, locking_script_hex: "76a914...88ac" }
+}
+
+# Profile B — includes pre-signed partial template
+provider = ->(request, payee:, amount:) {
+  tx = build_and_sign_template(payee: payee, amount: amount)
+  { txid: "...", vout: 0, satoshis: 1, locking_script_hex: "76a914...88ac",
+    partial_tx: tx.to_binary }
+}
+```
+
+The presence of `:partial_tx` in the response triggers Profile B behaviour. The gateway appends the OP_RETURN after deserialising the template.
+
 ## Infrastructure Required
 
-- **Treasury**: mints nonce UTXOs, holds the nonce key, signs templates (Profile B)
+Trust boundary: `[(X)+(B)] <-> [(T)]` — the server (x402-rack + BSV gateway) never holds keys; the treasury is a separate trust domain.
+
+- **Treasury** (`nonce_provider`): mints nonce UTXOs, holds keys, signs templates (Profile B)
 - **ARC**: mempool queries (`status(txid)`)

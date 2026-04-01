@@ -17,24 +17,22 @@ module X402
     # Proof:     X402-Proof (echoed challenge hash + rawtx + txid)
     #
     # Supports two modes:
-    # - Profile A (no nonce_key): challenge includes nonce UTXO metadata only
-    # - Profile B (with nonce_key): challenge includes pre-signed template with
-    #   nonce input at index 0 signed with 0xC3
+    # - Profile A: challenge includes nonce UTXO metadata only
+    # - Profile B: nonce_provider returns a pre-signed partial_tx template
     class ProofGateway < Gateway
-      NONCE_SIGHASH = ::BSV::Transaction::Sighash::SINGLE_FORK_ID_ANYONE_CAN_PAY
       ACCEPTABLE_MEMPOOL_STATUSES = %w[SEEN_ON_NETWORK ANNOUNCED_TO_NETWORK MINED].freeze
 
-      # @param nonce_provider [#call] callable returning nonce UTXO hash
+      # @param nonce_provider [#call] callable returning nonce UTXO hash;
+      #   receives (rack_request, payee:, amount:) kwargs.
+      #   Profile B providers include :partial_tx (binary) in the response.
       # @param arc_client [#status] ARC client for mempool queries
-      # @param nonce_key [BSV::Primitives::PrivateKey, nil] key for signing nonce input (Profile B)
       # @param payee_locking_script_hex [String, nil] payee script (falls back to config)
-      def initialize(nonce_provider:, arc_client:, nonce_key: nil,
+      def initialize(nonce_provider:, arc_client:,
                      payee_locking_script_hex: nil, wallet: nil, challenge_secret: nil)
         super(payee_locking_script_hex: payee_locking_script_hex, wallet: wallet,
               challenge_secret: challenge_secret)
         @nonce_provider = nonce_provider
         @arc_client = arc_client
-        @nonce_key = nonce_key
       end
 
       def challenge_headers(rack_request, route)
@@ -58,57 +56,14 @@ module X402
 
       private
 
-      # Build a Profile B template: nonce input (signed 0xC3) + payment + OP_RETURN.
-      # The 0xC3 signature commits to output 0 (payment) only.
-      # The OP_RETURN is added AFTER signing — it's unsigned data.
-      # Delegated clients should pop the OP_RETURN before adding their change
-      # (to preserve SIGHASH_SINGLE index alignment) and re-append it last.
-      # Falls back to base class (Profile A) when nonce_key is nil.
-      def build_proof_template(rack_request, route, nonce)
-        return super(rack_request, route) unless @nonce_key
-
-        validate_nonce_key!(nonce)
-
-        tx = ::BSV::Transaction::Transaction.new
-
-        # Input 0: nonce UTXO (will be signed with 0xC3)
-        nonce_script = ::BSV::Script::Script.from_hex(nonce[:locking_script_hex])
-        nonce_input = ::BSV::Transaction::TransactionInput.new(
-          prev_tx_id: [nonce[:txid]].pack("H*").reverse,
-          prev_tx_out_index: nonce[:vout]
-        )
-        nonce_input.source_satoshis = nonce[:satoshis]
-        nonce_input.source_locking_script = nonce_script
-        tx.add_input(nonce_input)
-
-        # Output 0: payment (committed by 0xC3 signature on input 0)
-        payee_hex = derive_payee_hex
-        payee_script = ::BSV::Script::Script.from_hex(payee_hex)
-        tx.add_output(::BSV::Transaction::TransactionOutput.new(
-                        satoshis: route.amount_sats,
-                        locking_script: payee_script
-                      ))
-
-        # Sign input 0 with 0xC3 (commits to output 0 only)
-        tx.sign(0, @nonce_key, NONCE_SIGHASH)
-
-        # Output 1: OP_RETURN binding (added AFTER signing — unsigned)
-        binding_hash = request_binding_hash(rack_request)
-        tx.add_output(::BSV::Transaction::TransactionOutput.new(
-                        satoshis: 0,
-                        locking_script: build_op_return_script(binding_hash)
-                      ))
-
-        [tx, payee_hex]
-      end
-
       def build_merkleworks_challenge(rack_request, route)
-        nonce = @nonce_provider.call(rack_request)
         config = X402.configuration
         payee_hex = derive_payee_hex
 
-        # Build template if Profile B
-        template, = build_proof_template(rack_request, route, nonce) if @nonce_key
+        nonce = @nonce_provider.call(rack_request, payee: payee_hex, amount: route.amount_sats)
+
+        # Profile B: provider returns a pre-signed partial_tx (binary)
+        template_binary = nonce[:partial_tx]
 
         attrs = {
           version: Challenge::CURRENT_VERSION,
@@ -128,8 +83,16 @@ module X402
           expires_at: Time.now.to_i + Challenge::DEFAULT_TTL
         }
 
-        # Profile B: include pre-signed template (not part of canonical hash)
-        attrs[:partial_tx_b64] = Base64.strict_encode64(template.to_binary) if template
+        if template_binary
+          # Deserialise the treasury's template and append OP_RETURN
+          tx = ::BSV::Transaction::Transaction.from_binary(template_binary)
+          binding_hash = request_binding_hash(rack_request)
+          tx.add_output(::BSV::Transaction::TransactionOutput.new(
+                          satoshis: 0,
+                          locking_script: build_op_return_script(binding_hash)
+                        ))
+          attrs[:partial_tx_b64] = Base64.strict_encode64(tx.to_binary)
+        end
 
         Challenge.new(attrs)
       end
@@ -155,7 +118,7 @@ module X402
         transaction = decode_transaction(proof)
         check_txid!(transaction, proof)
         check_nonce_input!(transaction, challenge)
-        verify_nonce_provenance!(transaction, challenge) if @nonce_key
+        verify_nonce_provenance!(transaction, challenge) if challenge.partial_tx_b64
         server_payee_hex = resolve_static_payee_hex
         verify_payment_output!(transaction, route, server_payee_hex)
         transaction
@@ -225,16 +188,6 @@ module X402
         raise
       rescue StandardError
         raise VerificationError.new("mempool check failed", status: 502)
-      end
-
-      # Validate that the nonce key matches the nonce UTXO's P2PKH locking script
-      def validate_nonce_key!(nonce)
-        expected_h160 = @nonce_key.public_key.hash160.unpack1("H*")
-        expected_script = "76a914#{expected_h160}88ac"
-        return if nonce[:locking_script_hex] == expected_script
-
-        raise X402::ConfigurationError,
-              "nonce_key does not match nonce UTXO locking script"
       end
     end
   end

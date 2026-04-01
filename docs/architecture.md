@@ -15,7 +15,7 @@ The middleware never decodes transactions, checks mempool, broadcasts, or intera
 
 ## Gateways
 
-Gateways are pluggable backends that handle chain-specific settlement. They **can** hold keys and sign transactions — they are separate components from the gatekeeper. Each gateway:
+Gateways are pluggable backends that handle chain-specific settlement. They delegate key management and signing to external providers (e.g. the treasury via `nonce_provider`). Each gateway:
 
 - Builds challenge data (including partial transaction templates)
 - Verifies and settles proofs

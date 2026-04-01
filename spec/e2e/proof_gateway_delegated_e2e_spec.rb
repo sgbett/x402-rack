@@ -73,7 +73,32 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
       nonce = mint_nonce!
       E2ELogger.tx("Nonce UTXO", nonce[:txid])
       E2ELogger.result("ARC status", nonce[:arc_status])
-      nonce_provider = ->(_req) { nonce }
+
+      # Provider builds and signs the template (treasury responsibility)
+      t_key = treasury_key
+      nonce_provider = lambda { |_req, payee:, amount:|
+        tx = BSV::Transaction::Transaction.new
+
+        nonce_script = BSV::Script::Script.from_hex(nonce[:locking_script_hex])
+        nonce_input = BSV::Transaction::TransactionInput.new(
+          prev_tx_id: [nonce[:txid]].pack("H*").reverse,
+          prev_tx_out_index: nonce[:vout]
+        )
+        nonce_input.source_satoshis = nonce[:satoshis]
+        nonce_input.source_locking_script = nonce_script
+        tx.add_input(nonce_input)
+
+        payee_script = BSV::Script::Script.from_hex(payee)
+        tx.add_output(BSV::Transaction::TransactionOutput.new(
+                        satoshis: amount,
+                        locking_script: payee_script
+                      ))
+
+        sighash = BSV::Transaction::Sighash::SINGLE_FORK_ID_ANYONE_CAN_PAY
+        tx.sign(0, t_key, sighash)
+
+        nonce.merge(partial_tx: tx.to_binary)
+      }
 
       E2ELogger.separator
 
@@ -83,7 +108,6 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
       gateway = X402::BSV::ProofGateway.new(
         nonce_provider: nonce_provider,
         arc_client: proof_arc,
-        nonce_key: treasury_key,
         payee_locking_script_hex: payee_script_hex
       )
 

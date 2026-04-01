@@ -12,7 +12,7 @@ RSpec.describe X402::BSV::ProofGateway do
   let(:nonce) do
     { txid: nonce_txid, vout: 0, satoshis: 1, locking_script_hex: "76a914#{"cc" * 20}88ac" }
   end
-  let(:nonce_provider) { ->(_req) { nonce } }
+  let(:nonce_provider) { ->(_req, **) { nonce } }
   let(:route) { X402::Configuration::Route.new(http_method: "GET", path: "/premium", amount_sats: 50) }
 
   let(:mock_arc) do
@@ -266,20 +266,49 @@ RSpec.describe X402::BSV::ProofGateway do
     end
   end
 
-  context "Profile B (with nonce_key)" do
+  context "Profile B (provider builds template)" do
     let(:nonce_key) { BSV::Primitives::PrivateKey.generate }
     let(:nonce_h160) { nonce_key.public_key.hash160.unpack1("H*") }
     let(:nonce_locking_script) { "76a914#{nonce_h160}88ac" }
-    let(:profile_b_nonce) do
-      { txid: nonce_txid, vout: 0, satoshis: 1, locking_script_hex: nonce_locking_script }
+    let(:nonce_sighash) { BSV::Transaction::Sighash::SINGLE_FORK_ID_ANYONE_CAN_PAY }
+
+    # Provider builds and signs the template itself (treasury responsibility)
+    let(:profile_b_provider) do
+      key = nonce_key
+      sighash = nonce_sighash
+      lambda do |_req, payee:, amount:|
+        tx = BSV::Transaction::Transaction.new
+
+        # Input 0: nonce UTXO
+        nonce_script = BSV::Script::Script.from_hex("76a914#{key.public_key.hash160.unpack1("H*")}88ac")
+        nonce_input = BSV::Transaction::TransactionInput.new(
+          prev_tx_id: [nonce_txid].pack("H*").reverse,
+          prev_tx_out_index: 0
+        )
+        nonce_input.source_satoshis = 1
+        nonce_input.source_locking_script = nonce_script
+        tx.add_input(nonce_input)
+
+        # Output 0: payment
+        payee_script = BSV::Script::Script.from_hex(payee)
+        tx.add_output(BSV::Transaction::TransactionOutput.new(
+                        satoshis: amount,
+                        locking_script: payee_script
+                      ))
+
+        # Sign input 0 with 0xC3
+        tx.sign(0, key, sighash)
+
+        { txid: nonce_txid, vout: 0, satoshis: 1,
+          locking_script_hex: nonce_script.to_hex,
+          partial_tx: tx.to_binary }
+      end
     end
-    let(:profile_b_provider) { ->(_req) { profile_b_nonce } }
 
     let(:profile_b_gateway) do
       described_class.new(
         nonce_provider: profile_b_provider,
         arc_client: mock_arc,
-        nonce_key: nonce_key,
         payee_locking_script_hex: payee_hex
       )
     end
@@ -312,13 +341,17 @@ RSpec.describe X402::BSV::ProofGateway do
       it "sha256_hex is the same with and without partial_tx_b64" do
         request = mock_request
 
-        # Profile B challenge
+        # Profile B challenge (provider returns partial_tx)
         b_headers = profile_b_gateway.challenge_headers(request, route)
         b_challenge = X402::Challenge.from_header(b_headers["X402-Challenge"])
 
-        # Profile A challenge (same params, no nonce_key)
+        # Profile A challenge (provider returns bare UTXO metadata, no partial_tx)
+        profile_a_provider = lambda { |_req, **|
+          { txid: nonce_txid, vout: 0, satoshis: 1,
+            locking_script_hex: nonce_locking_script }
+        }
         a_gw = described_class.new(
-          nonce_provider: profile_b_provider,
+          nonce_provider: profile_a_provider,
           arc_client: mock_arc,
           payee_locking_script_hex: payee_hex
         )
@@ -372,22 +405,27 @@ RSpec.describe X402::BSV::ProofGateway do
         expect(result.txid).to eq(template.txid_hex)
       end
 
-      it "rejects proof when nonce signed by wrong key" do
-        wrong_key = BSV::Primitives::PrivateKey.generate
-        wrong_h160 = wrong_key.public_key.hash160.unpack1("H*")
-        wrong_nonce = { txid: nonce_txid, vout: 0, satoshis: 1,
-                        locking_script_hex: "76a914#{wrong_h160}88ac" }
+      it "verifies nonce provenance based on challenge partial_tx_b64 presence" do
+        request = mock_request
 
-        # Gateway with wrong nonce key — nonce UTXO doesn't match
-        expect do
-          wrong_gw = described_class.new(
-            nonce_provider: ->(_req) { wrong_nonce },
-            arc_client: mock_arc,
-            nonce_key: nonce_key, # key doesn't match wrong_nonce
-            payee_locking_script_hex: payee_hex
-          )
-          wrong_gw.challenge_headers(mock_request, route)
-        end.to raise_error(X402::ConfigurationError, /nonce_key/)
+        # Profile B challenge includes partial_tx_b64 — settlement will verify provenance
+        headers = profile_b_gateway.challenge_headers(request, route)
+        challenge_header = headers["X402-Challenge"]
+        challenge = X402::Challenge.from_header(challenge_header)
+        expect(challenge.partial_tx_b64).not_to be_nil
+
+        # Profile A provider (no partial_tx) — settlement skips provenance check
+        profile_a_provider = lambda { |_req, **|
+          { txid: nonce_txid, vout: 0, satoshis: 1, locking_script_hex: nonce_locking_script }
+        }
+        a_gw = described_class.new(
+          nonce_provider: profile_a_provider,
+          arc_client: mock_arc,
+          payee_locking_script_hex: payee_hex
+        )
+        a_headers = a_gw.challenge_headers(request, route)
+        a_challenge = X402::Challenge.from_header(a_headers["X402-Challenge"])
+        expect(a_challenge.partial_tx_b64).to be_nil
       end
 
       it "rejects proof with nonce at index 1 instead of index 0" do

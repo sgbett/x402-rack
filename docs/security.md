@@ -48,7 +48,7 @@ The `0xC3` signature on input 0 proves the server issued the nonce. At settlemen
 
 ### Nonce Key Validation
 
-At challenge time (template signing), the gateway validates that the nonce key's public key hash matches the nonce UTXO's P2PKH locking script. Catches misconfiguration before producing an invalid template.
+Key validation is the treasury's responsibility. The gateway never holds a private key — the `nonce_provider` callable builds and signs the template. Misconfiguration (key/UTXO mismatch) is caught at settlement time when `verify_input(0)` fails.
 
 ### Payee Verification
 
