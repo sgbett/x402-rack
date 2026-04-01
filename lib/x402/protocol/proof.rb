@@ -20,8 +20,8 @@ module X402
         challenge_sha256: data[:challenge_sha256],
         payment: data[:payment]
       )
-    rescue JSON::ParserError => e
-      raise X402::Error, "invalid proof JSON: #{e.message}"
+    rescue JSON::ParserError
+      raise X402::Error, "invalid proof JSON"
     end
 
     # Convenience accessors for payment fields.

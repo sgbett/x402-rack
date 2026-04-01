@@ -97,8 +97,8 @@ module X402
       def decode_payment_payload(proof_payload)
         json = Base64.strict_decode64(proof_payload)
         JSON.parse(json)
-      rescue ArgumentError, JSON::ParserError => e
-        raise VerificationError.new("invalid payment payload: #{e.message}", status: 400)
+      rescue ArgumentError, JSON::ParserError
+        raise VerificationError.new("invalid payment payload", status: 400)
       end
 
       def verify_accepted!(payload, route)
@@ -122,8 +122,8 @@ module X402
         ::BSV::Transaction::Transaction.from_binary(raw)
       rescue VerificationError
         raise
-      rescue StandardError => e
-        raise VerificationError.new("failed to decode transaction: #{e.message}", status: 400)
+      rescue StandardError
+        raise VerificationError.new("failed to decode transaction", status: 400)
       end
 
       def verify_payment_output!(transaction, route, payee_hex)
@@ -149,9 +149,11 @@ module X402
       end
 
       def broadcast!(transaction)
-        arc_client.broadcast(transaction)
-      rescue StandardError => e
-        raise VerificationError.new("ARC broadcast failed: #{e.message}", status: 502)
+        arc_client.broadcast(transaction, wait_for: arc_wait_for)
+      rescue VerificationError
+        raise
+      rescue StandardError
+        raise VerificationError.new("ARC broadcast failed", status: 502)
       end
 
       def build_settlement_result(transaction)

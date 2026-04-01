@@ -65,8 +65,8 @@ module X402
       json = Base64Url.decode(header_value)
       data = JSON.parse(json, symbolize_names: true)
       new(data)
-    rescue JSON::ParserError => e
-      raise X402::Error, "invalid challenge JSON: #{e.message}"
+    rescue JSON::ParserError
+      raise X402::Error, "invalid challenge JSON"
     end
   end
 end

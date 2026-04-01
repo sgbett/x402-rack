@@ -12,8 +12,8 @@ module X402
 
     def decode(data)
       Base64.urlsafe_decode64(data)
-    rescue ArgumentError => e
-      raise X402::Error, "invalid base64url: #{e.message}"
+    rescue ArgumentError
+      raise X402::Error, "invalid base64url encoding"
     end
   end
 end

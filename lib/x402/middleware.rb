@@ -70,8 +70,8 @@ module X402
       error_response(e.status, e.reason)
     rescue X402::Error => e
       error_response(400, e.message)
-    rescue StandardError => e
-      error_response(500, "internal error: #{e.message}")
+    rescue StandardError
+      error_response(500, "internal error")
     end
 
     def error_response(status, reason)

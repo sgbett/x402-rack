@@ -247,7 +247,7 @@ RSpec.describe X402::Middleware do
       status, _, body = app.call(env)
       expect(status).to eq(500)
       parsed = JSON.parse(body.first)
-      expect(parsed["error"]).to match(/something broke/)
+      expect(parsed["error"]).to eq("internal error")
     end
   end
 

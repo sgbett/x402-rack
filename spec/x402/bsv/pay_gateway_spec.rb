@@ -12,8 +12,8 @@ RSpec.describe X402::BSV::PayGateway do
 
   let(:mock_arc) do
     arc = Object.new
-    def arc.broadcast(_transaction)
-      { "txid" => "cc" * 32, "status" => "SEEN_ON_NETWORK" }
+    def arc.broadcast(_transaction, **)
+      Struct.new(:txid, :tx_status).new("cc" * 32, "SEEN_ON_NETWORK")
     end
     arc
   end
@@ -203,7 +203,7 @@ RSpec.describe X402::BSV::PayGateway do
     context "with ARC broadcast failure" do
       let(:failing_arc) do
         arc = Object.new
-        def arc.broadcast(_transaction)
+        def arc.broadcast(_transaction, **)
           raise "connection refused"
         end
         arc

@@ -18,7 +18,7 @@ RSpec.describe X402::BSV::ProofGateway do
   let(:mock_arc) do
     arc = Object.new
     def arc.status(_txid)
-      { "status" => "SEEN_ON_NETWORK" }
+      Struct.new(:txid, :tx_status).new(nil, "SEEN_ON_NETWORK")
     end
     arc
   end

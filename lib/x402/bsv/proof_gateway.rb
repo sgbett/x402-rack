@@ -22,6 +22,7 @@ module X402
     #   nonce input at index 0 signed with 0xC3
     class ProofGateway < Gateway
       NONCE_SIGHASH = ::BSV::Transaction::Sighash::SINGLE_FORK_ID_ANYONE_CAN_PAY
+      ACCEPTABLE_MEMPOOL_STATUSES = %w[SEEN_ON_NETWORK ANNOUNCED_TO_NETWORK MINED].freeze
 
       # @param nonce_provider [#call] callable returning nonce UTXO hash
       # @param arc_client [#status] ARC client for mempool queries
@@ -163,8 +164,10 @@ module X402
       def decode_transaction(proof)
         raw = Base64.decode64(proof.rawtx_b64)
         ::BSV::Transaction::Transaction.from_binary(raw)
-      rescue StandardError => e
-        raise VerificationError, "failed to decode transaction: #{e.message}"
+      rescue VerificationError
+        raise
+      rescue StandardError
+        raise VerificationError, "failed to decode transaction"
       end
 
       def check_txid!(transaction, proof)
@@ -199,8 +202,8 @@ module X402
         end
       rescue VerificationError
         raise
-      rescue StandardError => e
-        raise VerificationError, "nonce provenance check failed: #{e.message}"
+      rescue StandardError
+        raise VerificationError, "nonce provenance check failed"
       end
 
       def verify_payment_output!(transaction, route, payee_hex)
@@ -214,9 +217,14 @@ module X402
       end
 
       def check_mempool!(txid)
-        @arc_client.status(txid)
-      rescue StandardError => e
-        raise VerificationError.new("mempool check failed: #{e.message}", status: 502)
+        response = @arc_client.status(txid)
+        return if ACCEPTABLE_MEMPOOL_STATUSES.include?(response.tx_status)
+
+        raise VerificationError.new("transaction not yet visible in mempool", status: 402)
+      rescue VerificationError
+        raise
+      rescue StandardError
+        raise VerificationError.new("mempool check failed", status: 502)
       end
 
       # Validate that the nonce key matches the nonce UTXO's P2PKH locking script
