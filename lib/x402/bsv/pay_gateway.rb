@@ -51,13 +51,14 @@ module X402
       end
 
       def settle!(_header_name, proof_payload, rack_request, route)
+        required_sats = route.resolve_amount_sats
         payload = decode_payment_payload(proof_payload)
-        verify_accepted!(payload, route)
+        verify_accepted!(payload, required_sats)
         accepted_payee = payload.dig("accepted", "payTo")
         pay_to_sig = payload.dig("accepted", "extra", "payToSig")
         verify_pay_to_signature!(accepted_payee, pay_to_sig)
         transaction = decode_transaction(payload)
-        verify_payment_output!(transaction, route, accepted_payee)
+        verify_payment_output!(transaction, required_sats, accepted_payee)
         verify_binding!(transaction, rack_request)
         settle_transaction!(transaction, route)
         build_settlement_result(transaction)
@@ -66,7 +67,8 @@ module X402
       private
 
       def build_challenge(rack_request, route)
-        template, payee_hex = build_template(rack_request, route)
+        required_sats = route.resolve_amount_sats
+        template, payee_hex = build_template(rack_request, required_sats)
 
         # PayGateway includes OP_RETURN in the template (no fee delegation index issues)
         binding_hash = request_binding_hash(rack_request)
@@ -78,15 +80,15 @@ module X402
         {
           "x402Version" => 2,
           "resource" => { "url" => rack_request.path_info },
-          "accepts" => [build_accept_entry(payee_hex, route, template)]
+          "accepts" => [build_accept_entry(payee_hex, required_sats, template)]
         }
       end
 
-      def build_accept_entry(payee_hex, route, template)
+      def build_accept_entry(payee_hex, required_sats, template)
         {
           "scheme" => SCHEME,
           "network" => NETWORK,
-          "amount" => route.amount_sats.to_s,
+          "amount" => required_sats.to_s,
           "asset" => ASSET,
           "payTo" => payee_hex,
           "maxTimeoutSeconds" => DEFAULT_MAX_TIMEOUT_SECONDS,
@@ -104,7 +106,7 @@ module X402
         raise VerificationError.new("invalid payment payload", status: 400)
       end
 
-      def verify_accepted!(payload, route)
+      def verify_accepted!(payload, required_sats)
         accepted = payload["accepted"]
         raise VerificationError.new("missing accepted field", status: 400) unless accepted
         if accepted["network"] != NETWORK
@@ -112,9 +114,9 @@ module X402
         end
 
         amount = accepted["amount"].to_i
-        return unless amount < route.amount_sats
+        return unless amount < required_sats
 
-        raise VerificationError.new("insufficient amount: #{amount} < #{route.amount_sats}", status: 402)
+        raise VerificationError.new("insufficient amount: #{amount} < #{required_sats}", status: 402)
       end
 
       def decode_transaction(payload)
@@ -129,14 +131,14 @@ module X402
         raise VerificationError.new("failed to decode transaction", status: 400)
       end
 
-      def verify_payment_output!(transaction, route, payee_hex)
+      def verify_payment_output!(transaction, required_sats, payee_hex)
         payee_script = payee_script_from_hex(payee_hex)
         found = transaction.outputs.any? do |output|
-          output.locking_script == payee_script && output.satoshis >= route.amount_sats
+          output.locking_script == payee_script && output.satoshis >= required_sats
         end
         return if found
 
-        raise VerificationError.new("no output pays >= #{route.amount_sats} sats to payee", status: 402)
+        raise VerificationError.new("no output pays >= #{required_sats} sats to payee", status: 402)
       end
 
       def verify_binding!(transaction, rack_request)
