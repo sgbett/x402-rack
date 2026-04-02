@@ -5,6 +5,8 @@ require_relative "x402/errors"
 require_relative "x402/settlement_result"
 require_relative "x402/configuration"
 require_relative "x402/middleware"
+require_relative "x402/payment_observer"
+require_relative "x402/settlement_worker"
 
 module X402
   class << self
