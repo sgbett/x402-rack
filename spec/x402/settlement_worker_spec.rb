@@ -17,7 +17,7 @@ RSpec.describe X402::SettlementWorker do
       worker.enqueue(tx_binary)
       worker.stop
 
-      expect(arc_client).to have_received(:broadcast).with(tx_binary)
+      expect(arc_client).to have_received(:broadcast).with(tx_binary, wait_for: "SEEN_ON_NETWORK")
     end
 
     it "processes multiple enqueued transactions" do
@@ -27,8 +27,8 @@ RSpec.describe X402::SettlementWorker do
       worker.enqueue("tx2")
       worker.stop
 
-      expect(arc_client).to have_received(:broadcast).with("tx1")
-      expect(arc_client).to have_received(:broadcast).with("tx2")
+      expect(arc_client).to have_received(:broadcast).with("tx1", wait_for: "SEEN_ON_NETWORK")
+      expect(arc_client).to have_received(:broadcast).with("tx2", wait_for: "SEEN_ON_NETWORK")
     end
   end
 
@@ -97,7 +97,7 @@ RSpec.describe X402::SettlementWorker do
       worker.enqueue(tx_binary)
       worker.stop
 
-      expect(arc_client).to have_received(:broadcast).with(tx_binary)
+      expect(arc_client).to have_received(:broadcast).with(tx_binary, wait_for: "SEEN_ON_NETWORK")
     end
 
     it "is safe to call when no thread has started" do

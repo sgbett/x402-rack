@@ -161,7 +161,7 @@ module X402
             raise ConfigurationError,
                   "route arc_wait_for is :async but no settlement_worker configured"
           end
-          settlement_worker.enqueue(transaction)
+          settlement_worker.enqueue(transaction.to_binary)
         else
           broadcast!(transaction, wait_for: effective)
         end

@@ -25,8 +25,15 @@ module X402
     end
 
     def stop
-      @queue.push(:shutdown)
-      @thread&.join
+      thread_to_join = nil
+      @mutex.synchronize do
+        return unless @thread&.alive?
+
+        @queue.push(:shutdown)
+        thread_to_join = @thread
+        @thread = nil
+      end
+      thread_to_join&.join
     end
 
     private
@@ -48,7 +55,7 @@ module X402
     end
 
     def broadcast_with_retry(tx_binary, attempt = 0)
-      result = @arc_client.broadcast(tx_binary)
+      result = @arc_client.broadcast(tx_binary, wait_for: "SEEN_ON_NETWORK")
       return if ACCEPTABLE_STATUSES.include?(result.tx_status)
       return if attempt >= @max_retries
 
