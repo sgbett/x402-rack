@@ -16,7 +16,7 @@ RSpec.describe X402::BSV::Gateway do
 
   describe "#build_template" do
     let(:request) { mock_request }
-    let(:result) { gateway.build_template(request, route) }
+    let(:result) { gateway.build_template(request, route.resolve_amount_sats) }
     let(:tx) { result[0] }
     let(:returned_payee_hex) { result[1] }
 
@@ -85,7 +85,7 @@ RSpec.describe X402::BSV::Gateway do
   describe "payee_locking_script_hex resolution" do
     it "uses the constructor arg when provided" do
       gw = described_class.new(payee_locking_script_hex: payee_hex)
-      tx, returned_hex = gw.build_template(mock_request, route)
+      tx, returned_hex = gw.build_template(mock_request, route.resolve_amount_sats)
       expected_script = BSV::Script::Script.from_hex(payee_hex)
       expect(tx.outputs[0].locking_script).to eq(expected_script)
       expect(returned_hex).to eq(payee_hex)
@@ -96,7 +96,7 @@ RSpec.describe X402::BSV::Gateway do
       X402.configuration.payee_locking_script_hex = payee_hex
 
       gw = described_class.new
-      tx, returned_hex = gw.build_template(mock_request, route)
+      tx, returned_hex = gw.build_template(mock_request, route.resolve_amount_sats)
       expected_script = BSV::Script::Script.from_hex(payee_hex)
       expect(tx.outputs[0].locking_script).to eq(expected_script)
       expect(returned_hex).to eq(payee_hex)
@@ -107,7 +107,7 @@ RSpec.describe X402::BSV::Gateway do
     it "raises when neither constructor arg nor config provides a payee script" do
       X402.reset_configuration!
       gw = described_class.new
-      expect { gw.build_template(mock_request, route) }
+      expect { gw.build_template(mock_request, route.resolve_amount_sats) }
         .to raise_error(X402::ConfigurationError, /payee_locking_script_hex/)
     ensure
       X402.reset_configuration!
@@ -121,18 +121,18 @@ RSpec.describe X402::BSV::Gateway do
       let(:wallet_gw) { described_class.new(wallet: wallet) }
 
       it "derives a unique payee address per challenge" do
-        _, hex1 = wallet_gw.build_template(mock_request, route)
-        _, hex2 = wallet_gw.build_template(mock_request, route)
+        _, hex1 = wallet_gw.build_template(mock_request, route.resolve_amount_sats)
+        _, hex2 = wallet_gw.build_template(mock_request, route.resolve_amount_sats)
         expect(hex1).not_to eq(hex2)
       end
 
       it "returns a valid P2PKH locking script" do
-        _, hex = wallet_gw.build_template(mock_request, route)
+        _, hex = wallet_gw.build_template(mock_request, route.resolve_amount_sats)
         expect(hex).to match(/\A76a914[0-9a-f]{40}88ac\z/)
       end
 
       it "uses the derived script in the payment output" do
-        tx, hex = wallet_gw.build_template(mock_request, route)
+        tx, hex = wallet_gw.build_template(mock_request, route.resolve_amount_sats)
         expected_script = BSV::Script::Script.from_hex(hex)
         expect(tx.outputs[0].locking_script).to eq(expected_script)
       end

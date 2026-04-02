@@ -44,14 +44,14 @@ module X402
       # @param rack_request [Rack::Request]
       # @param route [X402::Configuration::Route]
       # @return [Array(BSV::Transaction::Transaction, String)] transaction and payee script hex
-      def build_template(_rack_request, route)
+      def build_template(_rack_request, required_sats)
         tx = ::BSV::Transaction::Transaction.new
 
         # Output 0: payment (unique address if wallet configured, static otherwise)
         payee_hex = derive_payee_hex
         payee_script = ::BSV::Script::Script.from_hex(payee_hex)
         tx.add_output(::BSV::Transaction::TransactionOutput.new(
-                        satoshis: route.resolve_amount_sats,
+                        satoshis: required_sats,
                         locking_script: payee_script
                       ))
 

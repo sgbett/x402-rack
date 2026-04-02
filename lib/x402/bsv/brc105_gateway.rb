@@ -72,13 +72,14 @@ module X402
       # @param route [X402::Configuration::Route]
       # @return [SettlementResult]
       def settle!(_header_name, proof_payload, rack_request, route)
+        required_sats = route.resolve_amount_sats
         payment = parse_payment(proof_payload)
         prefix = payment["derivationPrefix"]
         suffix = payment["derivationSuffix"]
         validate_prefix_and_suffix!(prefix, suffix)
         subject_tx = parse_beef_transaction(payment["transaction"])
         expected_script = derive_payment_script(prefix, suffix, rack_request)
-        verify_payment_output!(subject_tx, route, expected_script)
+        verify_payment_output!(subject_tx, required_sats, expected_script)
         consume_prefix!(prefix)
         broadcast!(subject_tx)
         build_settlement_result(subject_tx)
@@ -139,14 +140,14 @@ module X402
         key if key.is_a?(String) && key.match?(COMPRESSED_PUBKEY_HEX)
       end
 
-      def verify_payment_output!(transaction, route, expected_script)
+      def verify_payment_output!(transaction, required_sats, expected_script)
         found = transaction.outputs.any? do |output|
-          output.locking_script == expected_script && output.satoshis >= route.resolve_amount_sats
+          output.locking_script == expected_script && output.satoshis >= required_sats
         end
         return if found
 
         raise VerificationError.new(
-          "no output pays >= #{route.resolve_amount_sats} sats to derived address", status: 402
+          "no output pays >= #{required_sats} sats to derived address", status: 402
         )
       end
 

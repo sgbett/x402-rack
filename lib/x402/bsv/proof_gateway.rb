@@ -45,10 +45,11 @@ module X402
       end
 
       def settle!(_header_name, proof_payload, rack_request, route)
+        required_sats = route.resolve_amount_sats
         proof = Proof.from_header(proof_payload)
         challenge = reconstruct_challenge(rack_request)
         run_protocol_checks!(challenge, proof, rack_request)
-        decode_and_verify_transaction!(proof, challenge, route)
+        decode_and_verify_transaction!(proof, challenge, required_sats)
         check_mempool!(proof.txid)
 
         SettlementResult.new(txid: proof.txid, network: "bsv:mainnet")
@@ -58,9 +59,10 @@ module X402
 
       def build_merkleworks_challenge(rack_request, route)
         config = X402.configuration
+        required_sats = route.resolve_amount_sats
         payee_hex = derive_payee_hex
 
-        nonce = @nonce_provider.call(rack_request, payee: payee_hex, amount: route.resolve_amount_sats)
+        nonce = @nonce_provider.call(rack_request, payee: payee_hex, amount: required_sats)
 
         # Profile B: provider returns a pre-signed partial_tx (binary)
         template_binary = nonce[:partial_tx]
@@ -74,7 +76,7 @@ module X402
           query: rack_request.query_string,
           req_headers_sha256: RequestBinding.headers_sha256(rack_request),
           req_body_sha256: RequestBinding.body_sha256(rack_request),
-          amount_sats: route.resolve_amount_sats,
+          amount_sats: required_sats,
           payee_locking_script_hex: payee_hex,
           nonce_txid: nonce[:txid],
           nonce_vout: nonce[:vout],
@@ -114,13 +116,13 @@ module X402
         Verification::ProtocolChecks.check_expiry!(challenge)
       end
 
-      def decode_and_verify_transaction!(proof, challenge, route)
+      def decode_and_verify_transaction!(proof, challenge, required_sats)
         transaction = decode_transaction(proof)
         check_txid!(transaction, proof)
         check_nonce_input!(transaction, challenge)
         verify_nonce_provenance!(transaction, challenge) if challenge.partial_tx_b64
         server_payee_hex = resolve_static_payee_hex
-        verify_payment_output!(transaction, route, server_payee_hex)
+        verify_payment_output!(transaction, required_sats, server_payee_hex)
         transaction
       end
 
@@ -169,14 +171,14 @@ module X402
         raise VerificationError, "nonce provenance check failed"
       end
 
-      def verify_payment_output!(transaction, route, payee_hex)
+      def verify_payment_output!(transaction, required_sats, payee_hex)
         payee_script = payee_script_from_hex(payee_hex)
         found = transaction.outputs.any? do |output|
-          output.locking_script == payee_script && output.satoshis >= route.resolve_amount_sats
+          output.locking_script == payee_script && output.satoshis >= required_sats
         end
         return if found
 
-        raise VerificationError.new("no output pays >= #{route.resolve_amount_sats} sats to payee", status: 402)
+        raise VerificationError.new("no output pays >= #{required_sats} sats to payee", status: 402)
       end
 
       def check_mempool!(txid)

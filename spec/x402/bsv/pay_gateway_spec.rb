@@ -34,7 +34,7 @@ RSpec.describe X402::BSV::PayGateway do
   # Build a valid payment tx from the gateway's template
   def build_valid_tx(request: mock_request, route_override: nil)
     r = route_override || route
-    template, = gateway.build_template(request, r)
+    template, = gateway.build_template(request, r.resolve_amount_sats)
 
     # Add a funding input (dummy)
     nonce_txid_bytes = ["dd" * 32].pack("H*")
