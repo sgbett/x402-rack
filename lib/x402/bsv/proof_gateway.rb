@@ -36,6 +36,10 @@ module X402
       end
 
       def challenge_headers(rack_request, route)
+        if route.amount_sats.respond_to?(:call)
+          raise ConfigurationError,
+                "proof_gateway does not support callable amount_sats (fiat pricing) — use a static value"
+        end
         challenge = build_merkleworks_challenge(rack_request, route)
         { "X402-Challenge" => challenge.to_header }
       end
