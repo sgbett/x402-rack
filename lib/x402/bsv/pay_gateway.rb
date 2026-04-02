@@ -20,22 +20,25 @@ module X402
       ASSET = "BSV"
       SCHEME = "exact"
 
-      attr_reader :arc_client, :arc_wait_for, :arc_timeout, :binding_mode
+      attr_reader :arc_client, :arc_wait_for, :arc_timeout, :binding_mode, :settlement_worker
 
       # @param arc_client [#broadcast] ARC client for broadcasting
       # @param arc_wait_for [String] ARC X-WaitFor header value
       # @param arc_timeout [Integer] seconds before ARC timeout
       # @param binding_mode [Symbol] :strict or :permissive for OP_RETURN binding
       # @param payee_locking_script_hex [String, nil] payee script (falls back to config)
+      # @param settlement_worker [#enqueue, nil] async settlement worker
       def initialize(arc_client:, arc_wait_for: DEFAULT_ARC_WAIT_FOR,
                      arc_timeout: DEFAULT_ARC_TIMEOUT, binding_mode: :permissive,
-                     payee_locking_script_hex: nil, wallet: nil, challenge_secret: nil)
+                     payee_locking_script_hex: nil, wallet: nil, challenge_secret: nil,
+                     settlement_worker: nil)
         super(payee_locking_script_hex: payee_locking_script_hex, wallet: wallet,
               challenge_secret: challenge_secret)
         @arc_client = arc_client
         @arc_wait_for = arc_wait_for
         @arc_timeout = arc_timeout
         @binding_mode = binding_mode
+        @settlement_worker = settlement_worker
       end
 
       def challenge_headers(rack_request, route)
@@ -56,7 +59,7 @@ module X402
         transaction = decode_transaction(payload)
         verify_payment_output!(transaction, route, accepted_payee)
         verify_binding!(transaction, rack_request)
-        broadcast!(transaction)
+        settle_transaction!(transaction, route)
         build_settlement_result(transaction)
       end
 
@@ -148,8 +151,24 @@ module X402
         raise VerificationError.new("OP_RETURN request binding mismatch", status: 400)
       end
 
-      def broadcast!(transaction)
-        arc_client.broadcast(transaction, wait_for: arc_wait_for)
+      # Determine the effective wait_for strategy and either broadcast
+      # synchronously or enqueue for async settlement.
+      def settle_transaction!(transaction, route)
+        effective = route.arc_wait_for || arc_wait_for
+
+        if effective.to_s == "async"
+          unless settlement_worker
+            raise ConfigurationError,
+                  "route arc_wait_for is :async but no settlement_worker configured"
+          end
+          settlement_worker.enqueue(transaction)
+        else
+          broadcast!(transaction, wait_for: effective)
+        end
+      end
+
+      def broadcast!(transaction, wait_for: arc_wait_for)
+        arc_client.broadcast(transaction, wait_for: wait_for)
       rescue VerificationError
         raise
       rescue StandardError
