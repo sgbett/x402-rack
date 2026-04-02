@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-02
+
+### Added
+
+- **Configuration DSL** — `config.enable :pay_gateway` with shared dependencies (ARC client, payee script) wired automatically. Convenience options: `server_wif:` builds KeyDeriver, `nonce_wif:` builds PrivateKey, default PrefixStore for BRC-105. Per-gateway overrides supported. Deferred construction at `validate!` time. Full backwards compatibility with `config.gateways = [...]`.
+- **Copilot review instructions** — `.github/copilot-instructions.md` with payment-bypass-focused review guidance.
+- **Dependabot** — weekly checks for bundler and GitHub Actions dependencies.
+
+### Changed
+
+- **Treasury refactor** — ProofGateway no longer holds the treasury's private key (`nonce_key:` removed). The `nonce_provider` callable now optionally returns a pre-signed `partial_tx:` for Profile B. Signing responsibility pushed from gateway to treasury. Trust boundary: `[(X)+(B)] <-> [(T)]`.
+- **nonce_provider interface** — now receives `payee:` and `amount:` kwargs. Profile detection moved from constructor config to provider response.
+- **Dependencies** — `bsv-sdk ~> 0.4`, `bsv-wallet ~> 0.2` (BRC-100 wallet interface now available).
+
+### Fixed
+
+- **ARC wait_for enforced** — PayGateway now passes `arc_wait_for` to `broadcast(tx, wait_for:)`. Previously stored but never used.
+- **Mempool status validated** — ProofGateway `check_mempool!` now verifies `tx_status` is `SEEN_ON_NETWORK`, `ANNOUNCED_TO_NETWORK`, or `MINED`. Non-propagated statuses (`RECEIVED`, `STORED`) correctly rejected.
+- **Error messages hardened** — all gateways, middleware, and protocol parsers now return fixed generic strings. No SDK exception messages forwarded to HTTP clients.
+- **Config DSL memoisation** — `shared_arc_client` checks injected `arc_client` on every call, not just first.
+
+### Removed
+
+- **`nonce_key:` parameter** from ProofGateway constructor (breaking change for Profile B users — signing moves to nonce_provider).
+- **`nonce_wif:` and `nonce_key:` convenience options** from configuration DSL (no longer applicable).
+
 ## [0.2.0] - 2026-03-30
 
 ### Added
@@ -59,5 +85,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Operations docs** — deployment, performance, treasury/nonce lifecycle.
 - **Ecosystem docs** — Coinbase v2, merkleworks, BRC-105 positioning and header namespace reservations.
 
+[0.3.0]: https://github.com/sgbett/x402-rack/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sgbett/x402-rack/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sgbett/x402-rack/releases/tag/v0.1.0
