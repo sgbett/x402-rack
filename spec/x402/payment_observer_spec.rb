@@ -291,5 +291,12 @@ RSpec.describe X402::PaymentObserver do
         described_class.new(inner_app, worker: mock_worker)
       end.to raise_error(X402::ConfigurationError, /recogniser.*payee_locking_script_hex/)
     end
+
+    it "raises when recogniser does not respond to #ours?" do
+      bad_recogniser = Object.new
+      expect do
+        described_class.new(inner_app, worker: mock_worker, recogniser: bad_recogniser)
+      end.to raise_error(X402::ConfigurationError, /ours\?/)
+    end
   end
 end

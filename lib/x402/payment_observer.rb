@@ -59,7 +59,13 @@ module X402
     private
 
     def build_recogniser(recogniser, payee_hex)
-      return recogniser if recogniser
+      if recogniser
+        unless recogniser.respond_to?(:ours?)
+          raise ConfigurationError,
+                "PaymentObserver recogniser must respond to #ours?(locking_script_hex)"
+        end
+        return recogniser
+      end
 
       unless payee_hex
         raise ConfigurationError,
@@ -115,7 +121,7 @@ module X402
     # Used when +payee_locking_script_hex+ is provided without a custom recogniser.
     class StaticRecogniser
       def initialize(payee_locking_script_hex)
-        @payee_hex = payee_locking_script_hex
+        @payee_hex = ::BSV::Script::Script.from_hex(payee_locking_script_hex).to_hex
       end
 
       def ours?(locking_script_hex)
