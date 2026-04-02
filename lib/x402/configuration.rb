@@ -162,6 +162,9 @@ module X402
       unless exchange_rate_provider
         raise ConfigurationError, "amount_usd requires exchange_rate_provider to be configured"
       end
+      unless exchange_rate_provider.respond_to?(:sats_for)
+        raise ConfigurationError, "exchange_rate_provider must respond to #sats_for(currency, amount)"
+      end
 
       provider = exchange_rate_provider
       usd = amount_usd
