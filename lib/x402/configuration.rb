@@ -27,7 +27,7 @@ module X402
     }.freeze
 
     attr_accessor :domain, :payee_locking_script_hex, :gateways,
-                  :arc_url, :arc_api_key, :arc_client
+                  :arc_url, :arc_api_key, :arc_client, :server_wif
     attr_reader :routes, :gateway_specs
 
     def initialize
@@ -60,6 +60,17 @@ module X402
       @shared_arc_client ||= build_arc_client
     end
 
+    # Returns a memoised ProtoWallet built from +server_wif+.
+    # Used as the shared wallet for all gateways, providing per-payment
+    # derived addresses via BRC-42/43 key derivation.
+    #
+    # @return [BSV::Wallet::ProtoWallet, nil]
+    def shared_wallet
+      return unless @server_wif
+
+      @shared_wallet ||= build_wallet
+    end
+
     # Register a protected route.
     #
     # @param method [String] HTTP method or "*" for any
@@ -82,10 +93,7 @@ module X402
     def validate!
       raise ConfigurationError, "domain is required" if domain.nil? || domain.empty?
 
-      if payee_locking_script_hex.nil? || payee_locking_script_hex.empty?
-        raise ConfigurationError,
-              "payee_locking_script_hex is required"
-      end
+      validate_payee_source!
       build_gateways_from_specs! if gateways.empty? && !gateway_specs.empty?
       validate_gateways!
       raise ConfigurationError, "at least one route must be protected" if routes.empty?
@@ -121,10 +129,24 @@ module X402
       end
     end
 
+    def validate_payee_source!
+      has_payee = payee_locking_script_hex && !payee_locking_script_hex.empty?
+      has_wallet = @server_wif && !@server_wif.empty?
+
+      return if has_payee || has_wallet
+
+      raise ConfigurationError, "server_wif or payee_locking_script_hex is required"
+    end
+
     def build_arc_client
       raise ConfigurationError, "arc_url is required (or inject arc_client directly)" if arc_url.nil? || arc_url.empty?
 
       ::BSV::Network::ARC.new(arc_url, api_key: arc_api_key)
+    end
+
+    def build_wallet
+      key = ::BSV::Primitives::PrivateKey.from_wif(@server_wif)
+      ::BSV::Wallet::ProtoWallet.new(key)
     end
 
     def build_gateways_from_specs!
@@ -143,9 +165,11 @@ module X402
 
     def build_pay_gateway(klass, options)
       reject_unknown_options!(:pay_gateway, options, PAY_GATEWAY_KNOWN_OPTS)
-      opts = { arc_client: options[:arc_client] || shared_arc_client,
-               payee_locking_script_hex: options[:payee_locking_script_hex] || payee_locking_script_hex }
-      %i[arc_wait_for arc_timeout binding_mode wallet challenge_secret].each do |key|
+      wallet = options[:wallet] || shared_wallet
+      opts = { arc_client: options[:arc_client] || shared_arc_client }
+      opts[:payee_locking_script_hex] = options[:payee_locking_script_hex] || payee_locking_script_hex
+      opts[:wallet] = wallet if wallet
+      %i[arc_wait_for arc_timeout binding_mode challenge_secret].each do |key|
         opts[key] = options[key] if options.key?(key)
       end
       klass.new(**opts)
@@ -156,11 +180,13 @@ module X402
 
       raise ConfigurationError, "proof_gateway requires nonce_provider:" unless options.key?(:nonce_provider)
 
+      wallet = options[:wallet] || shared_wallet
       opts = { arc_client: options[:arc_client] || shared_arc_client,
                payee_locking_script_hex: options[:payee_locking_script_hex] || payee_locking_script_hex,
                nonce_provider: options[:nonce_provider] }
+      opts[:wallet] = wallet if wallet
 
-      %i[wallet challenge_secret].each do |key|
+      %i[challenge_secret].each do |key|
         opts[key] = options[key] if options.key?(key)
       end
       klass.new(**opts)
@@ -174,18 +200,21 @@ module X402
         raise ConfigurationError,
               "brc105_gateway: #{key_sources.join(", ")} are mutually exclusive — provide only one"
       end
-      if key_sources.empty?
-        raise ConfigurationError,
-              "brc105_gateway requires one of: key_deriver:, server_wif:, or server_key:"
-      end
 
       key_deriver = if options.key?(:key_deriver)
                       options[:key_deriver]
                     elsif options.key?(:server_wif)
                       ::BSV::Wallet::KeyDeriver.new(::BSV::Primitives::PrivateKey.from_wif(options[:server_wif]))
-                    else
+                    elsif options.key?(:server_key)
                       ::BSV::Wallet::KeyDeriver.new(options[:server_key])
+                    elsif shared_wallet
+                      shared_wallet.key_deriver
                     end
+
+      unless key_deriver
+        raise ConfigurationError,
+              "brc105_gateway requires one of: key_deriver:, server_wif:, server_key:, or top-level server_wif"
+      end
 
       klass.new(
         key_deriver: key_deriver,

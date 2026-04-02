@@ -12,3 +12,4 @@
 .env
 .mcp.json
 spec/e2e/logs/
+*.gem

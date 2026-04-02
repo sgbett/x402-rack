@@ -89,11 +89,20 @@ RSpec.describe X402::Configuration do
       expect { config.validate! }.to raise_error(X402::ConfigurationError, /domain/)
     end
 
-    it "raises when payee_locking_script_hex is missing" do
+    it "raises when neither server_wif nor payee_locking_script_hex is set" do
       config.domain = "example.com"
       config.gateways = [mock_gateway]
       config.protect(method: "GET", path: "/", amount_sats: 1)
-      expect { config.validate! }.to raise_error(X402::ConfigurationError, /payee_locking_script_hex/)
+      expect { config.validate! }.to raise_error(X402::ConfigurationError, /server_wif or payee_locking_script_hex/)
+    end
+
+    it "succeeds with server_wif instead of payee_locking_script_hex" do
+      config.domain = "example.com"
+      config.server_wif = "L1server"
+      config.gateways = [mock_gateway]
+      config.protect(method: "GET", path: "/", amount_sats: 1)
+
+      expect { config.validate! }.not_to raise_error
     end
 
     it "raises when no gateways are configured" do
@@ -438,6 +447,79 @@ RSpec.describe X402::Configuration do
 
         # Gateway was built without error — the override was accepted
         expect(config.gateways.first).to be_a(X402::BSV::PayGateway)
+      end
+    end
+
+    context "server_wif shared wallet" do
+      let(:private_key) { instance_double("BSV::Primitives::PrivateKey") }
+      let(:key_deriver) { instance_double("BSV::Wallet::KeyDeriver") }
+      let(:proto_wallet) { instance_double("BSV::Wallet::ProtoWallet", key_deriver: key_deriver) }
+
+      before do
+        config.payee_locking_script_hex = nil
+        config.server_wif = "L1serverWif"
+
+        allow(BSV::Primitives::PrivateKey).to receive(:from_wif)
+          .with("L1serverWif")
+          .and_return(private_key)
+        allow(BSV::Wallet::ProtoWallet).to receive(:new)
+          .with(private_key)
+          .and_return(proto_wallet)
+      end
+
+      it "wires shared wallet into PayGateway" do
+        config.enable :pay_gateway
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw).to be_a(X402::BSV::PayGateway)
+        expect(gw.instance_variable_get(:@wallet)).to eq(proto_wallet)
+      end
+
+      it "wires shared wallet into ProofGateway" do
+        config.enable :proof_gateway, nonce_provider: nonce_provider
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw).to be_a(X402::BSV::ProofGateway)
+        expect(gw.instance_variable_get(:@wallet)).to eq(proto_wallet)
+      end
+
+      it "wires shared wallet key_deriver into BRC105Gateway" do
+        config.enable :brc105_gateway
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw).to be_a(X402::BSV::BRC105Gateway)
+      end
+
+      it "does not require payee_locking_script_hex when server_wif is set" do
+        config.enable :pay_gateway
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "per-gateway wallet override takes precedence" do
+        custom_wallet = instance_double("BSV::Wallet::ProtoWallet")
+        config.enable :pay_gateway, wallet: custom_wallet
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@wallet)).to eq(custom_wallet)
+      end
+
+      it "per-gateway key_deriver override takes precedence for BRC105" do
+        custom_kd = instance_double("BSV::Wallet::KeyDeriver")
+        config.enable :brc105_gateway, key_deriver: custom_kd
+        config.validate!
+
+        expect(config.gateways.first).to be_a(X402::BSV::BRC105Gateway)
+      end
+
+      it "memoises the shared wallet" do
+        first = config.shared_wallet
+        second = config.shared_wallet
+        expect(first).to equal(second)
+        expect(BSV::Wallet::ProtoWallet).to have_received(:new).once
       end
     end
 
