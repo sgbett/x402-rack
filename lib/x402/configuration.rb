@@ -66,7 +66,7 @@ module X402
     #
     # @return [BSV::Wallet::ProtoWallet, nil]
     def shared_wallet
-      return unless @server_wif
+      return if @server_wif.nil? || @server_wif.empty?
 
       @shared_wallet ||= build_wallet
     end
@@ -180,13 +180,11 @@ module X402
 
       raise ConfigurationError, "proof_gateway requires nonce_provider:" unless options.key?(:nonce_provider)
 
-      wallet = options[:wallet] || shared_wallet
       opts = { arc_client: options[:arc_client] || shared_arc_client,
                payee_locking_script_hex: options[:payee_locking_script_hex] || payee_locking_script_hex,
                nonce_provider: options[:nonce_provider] }
-      opts[:wallet] = wallet if wallet
 
-      %i[challenge_secret].each do |key|
+      %i[wallet challenge_secret].each do |key|
         opts[key] = options[key] if options.key?(key)
       end
       klass.new(**opts)

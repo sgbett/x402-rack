@@ -476,13 +476,14 @@ RSpec.describe X402::Configuration do
         expect(gw.instance_variable_get(:@wallet)).to eq(proto_wallet)
       end
 
-      it "wires shared wallet into ProofGateway" do
+      it "does not wire shared wallet into ProofGateway" do
+        config.payee_locking_script_hex = "76a914..."
         config.enable :proof_gateway, nonce_provider: nonce_provider
         config.validate!
 
         gw = config.gateways.first
         expect(gw).to be_a(X402::BSV::ProofGateway)
-        expect(gw.instance_variable_get(:@wallet)).to eq(proto_wallet)
+        expect(gw.instance_variable_get(:@wallet)).to be_nil
       end
 
       it "wires shared wallet key_deriver into BRC105Gateway" do
