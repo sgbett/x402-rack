@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-04-03
+
+### Added
+
+- **Server wallet** — `config.server_wif` builds a shared `ProtoWallet` (BRC-42/43 key derivation) for all gateways. Per-payment derived addresses, no address reuse. Falls back to static `payee_locking_script_hex` when not set. Per-gateway overrides (`wallet:`, `key_deriver:`) take precedence.
+- **Settlement worker** — `X402::SettlementWorker` for async background broadcast. Ruby stdlib only (Thread + Queue), exponential backoff retry, zero dependencies. Pluggable interface (`#enqueue(tx_binary)`) for Sidekiq/Redis.
+- **Per-route ARC thresholds** — `config.protect` accepts `arc_wait_for:` to override the gateway default. `:async` validates tx locally then enqueues, responding 200 immediately.
+- **Payment observer** — `X402::PaymentObserver` Rack middleware for voluntary ungated payments. Watches for payment headers, validates payee, enqueues to settlement worker. Never gates access. Configurable proof headers and `on_payment` callback.
+- **Pluggable recogniser** — `PaymentObserver` accepts `recogniser:` (any object responding to `#ours?(locking_script_hex)`) for BRC-29 derived address payment channels. `StaticRecogniser` wraps the existing static payee behaviour.
+- **Fiat-denominated pricing** — `config.protect` accepts `amount_usd:` resolved to sats at challenge time via `exchange_rate_provider`. Also accepts callable `amount_sats:` for any dynamic pricing. Provider interface: `#sats_for(currency, amount)`.
+
+### Changed
+
+- **`build_template` signature** — now accepts `required_sats` integer instead of route object. Gateways snapshot the resolved amount once per request.
+- **ProofGateway rejects callable pricing** — raises `ConfigurationError` at challenge time. The merkleworks canonical hash includes `amount_sats`; a callable would produce different hashes across requests.
+
+### Fixed
+
+- **`arc_wait_for` coerced to string** — prevents Symbol values being passed to ARC client.
+- **PaymentObserver pass-through guarantee** — enqueue/callback failures wrapped in rescue, never break the request.
+- **Recogniser interface validated** — `ConfigurationError` if recogniser doesn't respond to `#ours?`.
+- **Static payee hex canonicalised** — round-trips through `Script.from_hex.to_hex` in `StaticRecogniser`.
+- **Exchange rate provider validated** — `ConfigurationError` if provider doesn't respond to `#sats_for`.
+
 ## [0.3.0] - 2026-04-02
 
 ### Added
@@ -85,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Operations docs** — deployment, performance, treasury/nonce lifecycle.
 - **Ecosystem docs** — Coinbase v2, merkleworks, BRC-105 positioning and header namespace reservations.
 
+[0.4.0]: https://github.com/sgbett/x402-rack/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sgbett/x402-rack/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sgbett/x402-rack/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/sgbett/x402-rack/releases/tag/v0.1.0
