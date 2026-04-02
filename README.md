@@ -6,9 +6,7 @@ The middleware is a pure dispatcher — it matches routes, issues payment challe
 
 ## Status
 
-Early development (v0.1.0). Architecture is defined; gateway implementation is in progress. See [DESIGN.md](DESIGN.md) for architecture notes.
-
-**This is pre-release software and should not be used for real-world monetary purposes.**
+v0.3.0 — PayGateway, ProofGateway, and BRC105Gateway all functional with e2e tests against BSV testnet. See [CHANGELOG.md](CHANGELOG.md) for release history and [DESIGN.md](DESIGN.md) for architecture notes.
 
 ## Installation
 
@@ -32,7 +30,7 @@ require "x402"
 
 X402.configure do |config|
   config.domain = "api.example.com"
-  config.payee_locking_script_hex = "76a914...88ac"
+  config.server_wif = ENV["SERVER_WIF"]  # recommended — derives unique addresses per payment
 
   # Shared ARC connection — built once, used by all gateways
   config.arc_url = "https://arc.taal.com"
@@ -40,8 +38,6 @@ X402.configure do |config|
 
   # Enable gateways — constructed automatically from shared deps
   config.enable :pay_gateway
-  config.enable :proof_gateway, nonce_provider: my_nonce_provider
-  config.enable :brc105_gateway, server_wif: "L3..."
 
   config.protect method: :GET, path: "/api/expensive", amount_sats: 100
 end
@@ -56,8 +52,8 @@ Each gateway type supports convenience options that expand into their full form:
 - **`:brc105_gateway`** — `server_wif: "L3..."` builds a `KeyDeriver` from a WIF
   string. `server_key:` accepts a `PrivateKey` directly. A default in-memory
   `PrefixStore` is used if `prefix_store:` is not provided.
-- **`:proof_gateway`** — `nonce_wif: "L3..."` builds a `PrivateKey` for the
-  `nonce_key:` parameter.
+- **`:proof_gateway`** — requires `nonce_provider:` callable. The provider
+  receives `(rack_request, payee:, amount:)` and returns nonce UTXO metadata.
 - **`:pay_gateway`** — pass-through options: `arc_wait_for:`, `arc_timeout:`,
   `binding_mode:`, `wallet:`, `challenge_secret:`.
 
