@@ -154,12 +154,12 @@ RSpec.describe X402::PaymentObserver do
     let(:app) do
       described_class.new(inner_app, worker: mock_worker,
                                      payee_locking_script_hex: payee_hex,
-                                     proof_headers: %w[X-BSV-Payment])
+                                     proof_headers: %w[X-Custom-Payment])
     end
 
     it "detects payment on custom header" do
       env = Rack::MockRequest.env_for("/anything", method: "POST")
-      env["HTTP_X_BSV_PAYMENT"] = build_proof
+      env["HTTP_X_CUSTOM_PAYMENT"] = build_proof
 
       app.call(env)
 
@@ -218,13 +218,13 @@ RSpec.describe X402::PaymentObserver do
     let(:app) do
       described_class.new(inner_app, worker: mock_worker,
                                      payee_locking_script_hex: payee_hex,
-                                     proof_headers: %w[Payment-Signature X-BSV-Payment])
+                                     proof_headers: %w[Payment-Signature X-Custom-Payment])
     end
 
     it "uses the first matching header" do
       env = Rack::MockRequest.env_for("/anything", method: "POST")
       env["HTTP_PAYMENT_SIGNATURE"] = build_proof
-      env["HTTP_X_BSV_PAYMENT"] = build_proof
+      env["HTTP_X_CUSTOM_PAYMENT"] = build_proof
 
       app.call(env)
 

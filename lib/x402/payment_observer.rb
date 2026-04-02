@@ -57,10 +57,16 @@ module X402
         tx_binary = extract_and_validate(value)
         next unless tx_binary
 
-        @worker.enqueue(tx_binary)
-        @on_payment&.call(tx_binary)
+        enqueue_payment(tx_binary)
         break
       end
+    end
+
+    def enqueue_payment(tx_binary)
+      @worker.enqueue(tx_binary)
+      @on_payment&.call(tx_binary)
+    rescue StandardError
+      # Never let enqueue/callback failures break the request pass-through
     end
 
     def extract_and_validate(proof_payload)
