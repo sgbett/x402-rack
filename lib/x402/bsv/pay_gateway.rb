@@ -154,9 +154,9 @@ module X402
       # Determine the effective wait_for strategy and either broadcast
       # synchronously or enqueue for async settlement.
       def settle_transaction!(transaction, route)
-        effective = route.arc_wait_for || arc_wait_for
+        effective = (route.arc_wait_for || arc_wait_for).to_s
 
-        if effective.to_s == "async"
+        if effective == "async"
           unless settlement_worker
             raise ConfigurationError,
                   "route arc_wait_for is :async but no settlement_worker configured"
