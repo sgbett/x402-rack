@@ -2,7 +2,16 @@
 
 module X402
   class Configuration
-    Route = Struct.new(:http_method, :path, :amount_sats, :arc_wait_for, keyword_init: true)
+    # Route holds a raw +amount_sats+ that may be an Integer or a callable.
+    # The +resolve_amount_sats+ method evaluates callables at access time,
+    # enabling fiat-denominated pricing with live exchange rates.
+    Route = Struct.new(:http_method, :path, :amount_sats, :arc_wait_for, keyword_init: true) do
+      # Resolves +amount_sats+ — if it's a callable (Proc/Lambda),
+      # it is evaluated each time to get the current sats amount.
+      def resolve_amount_sats
+        amount_sats.respond_to?(:call) ? amount_sats.call : amount_sats
+      end
+    end
 
     GATEWAY_METHODS = %i[challenge_headers proof_header_names settle!].freeze
 
@@ -27,7 +36,8 @@ module X402
     }.freeze
 
     attr_accessor :domain, :payee_locking_script_hex, :gateways,
-                  :arc_url, :arc_api_key, :arc_client, :server_wif
+                  :arc_url, :arc_api_key, :arc_client, :server_wif,
+                  :exchange_rate_provider
     attr_reader :routes, :gateway_specs
 
     def initialize
@@ -75,7 +85,13 @@ module X402
     #
     # @param method [String] HTTP method or "*" for any
     # @param path [String, Regexp] exact path or pattern
-    # @param amount_sats [Integer] required payment in satoshis
+    # @param amount_sats [Integer, #call] required payment in satoshis.
+    #   Accepts a static Integer or a callable (Proc/Lambda) that returns
+    #   the current sats amount at challenge time. Use a callable for
+    #   fiat-denominated pricing with live exchange rates.
+    # @param amount_usd [Numeric, nil] convenience — price in USD, resolved
+    #   to sats at challenge time via +exchange_rate_provider+. Mutually
+    #   exclusive with +amount_sats+.
     # @param arc_wait_for [String, Symbol, nil] per-route ARC settlement override.
     #   +nil+ (default) uses the gateway's +arc_wait_for+ setting.
     #   A string value (e.g. +"SEEN_ON_NETWORK"+, +"MINED"+) overrides the
@@ -83,8 +99,9 @@ module X402
     #   +:async+ validates the transaction locally then enqueues it for
     #   background settlement via the gateway's +settlement_worker+, returning
     #   200 immediately without waiting for ARC confirmation.
-    def protect(method:, path:, amount_sats:, arc_wait_for: nil)
-      @routes << Route.new(http_method: method.upcase, path: path, amount_sats: amount_sats, arc_wait_for: arc_wait_for)
+    def protect(method:, path:, amount_sats: nil, amount_usd: nil, arc_wait_for: nil)
+      sats = resolve_amount(amount_sats, amount_usd)
+      @routes << Route.new(http_method: method.upcase, path: path, amount_sats: sats, arc_wait_for: arc_wait_for)
     end
 
     # Find the matching route for a request method and path.
@@ -134,6 +151,21 @@ module X402
           seen[name] = i
         end
       end
+    end
+
+    def resolve_amount(amount_sats, amount_usd)
+      raise ConfigurationError, "amount_sats and amount_usd are mutually exclusive" if amount_sats && amount_usd
+
+      return amount_sats if amount_sats
+
+      raise ConfigurationError, "protect requires amount_sats: or amount_usd:" unless amount_usd
+      unless exchange_rate_provider
+        raise ConfigurationError, "amount_usd requires exchange_rate_provider to be configured"
+      end
+
+      provider = exchange_rate_provider
+      usd = amount_usd
+      -> { provider.sats_for("USD", usd) }
     end
 
     def validate_payee_source!

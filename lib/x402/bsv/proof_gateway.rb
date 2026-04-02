@@ -60,7 +60,7 @@ module X402
         config = X402.configuration
         payee_hex = derive_payee_hex
 
-        nonce = @nonce_provider.call(rack_request, payee: payee_hex, amount: route.amount_sats)
+        nonce = @nonce_provider.call(rack_request, payee: payee_hex, amount: route.resolve_amount_sats)
 
         # Profile B: provider returns a pre-signed partial_tx (binary)
         template_binary = nonce[:partial_tx]
@@ -74,7 +74,7 @@ module X402
           query: rack_request.query_string,
           req_headers_sha256: RequestBinding.headers_sha256(rack_request),
           req_body_sha256: RequestBinding.body_sha256(rack_request),
-          amount_sats: route.amount_sats,
+          amount_sats: route.resolve_amount_sats,
           payee_locking_script_hex: payee_hex,
           nonce_txid: nonce[:txid],
           nonce_vout: nonce[:vout],
@@ -172,11 +172,11 @@ module X402
       def verify_payment_output!(transaction, route, payee_hex)
         payee_script = payee_script_from_hex(payee_hex)
         found = transaction.outputs.any? do |output|
-          output.locking_script == payee_script && output.satoshis >= route.amount_sats
+          output.locking_script == payee_script && output.satoshis >= route.resolve_amount_sats
         end
         return if found
 
-        raise VerificationError.new("no output pays >= #{route.amount_sats} sats to payee", status: 402)
+        raise VerificationError.new("no output pays >= #{route.resolve_amount_sats} sats to payee", status: 402)
       end
 
       def check_mempool!(txid)

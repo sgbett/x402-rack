@@ -51,7 +51,7 @@ module X402
         payee_hex = derive_payee_hex
         payee_script = ::BSV::Script::Script.from_hex(payee_hex)
         tx.add_output(::BSV::Transaction::TransactionOutput.new(
-                        satoshis: route.amount_sats,
+                        satoshis: route.resolve_amount_sats,
                         locking_script: payee_script
                       ))
 

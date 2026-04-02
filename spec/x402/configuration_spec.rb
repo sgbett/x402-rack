@@ -64,6 +64,50 @@ RSpec.describe X402::Configuration do
       config.protect(method: "GET", path: "/api", amount_sats: 100)
       expect(config.routes.first.arc_wait_for).to be_nil
     end
+
+    it "accepts a callable for amount_sats" do
+      counter = 0
+      callable = lambda do
+        counter += 1
+        counter * 100
+      end
+      config.protect(method: "GET", path: "/api", amount_sats: callable)
+      route = config.routes.first
+      expect(route.resolve_amount_sats).to eq(100)
+      expect(route.resolve_amount_sats).to eq(200)
+    end
+
+    it "resolves static amount_sats via resolve_amount_sats" do
+      config.protect(method: "GET", path: "/api", amount_sats: 500)
+      expect(config.routes.first.resolve_amount_sats).to eq(500)
+    end
+
+    it "accepts amount_usd when exchange_rate_provider is configured" do
+      provider = Object.new
+      provider.define_singleton_method(:sats_for) { |_currency, _amount| 250 }
+      config.exchange_rate_provider = provider
+      config.protect(method: "GET", path: "/api", amount_usd: 0.25)
+
+      expect(config.routes.first.resolve_amount_sats).to eq(250)
+    end
+
+    it "raises when amount_usd used without exchange_rate_provider" do
+      expect do
+        config.protect(method: "GET", path: "/api", amount_usd: 0.25)
+      end.to raise_error(X402::ConfigurationError, /exchange_rate_provider/)
+    end
+
+    it "raises when both amount_sats and amount_usd provided" do
+      expect do
+        config.protect(method: "GET", path: "/api", amount_sats: 100, amount_usd: 0.25)
+      end.to raise_error(X402::ConfigurationError, /mutually exclusive/)
+    end
+
+    it "raises when neither amount_sats nor amount_usd provided" do
+      expect do
+        config.protect(method: "GET", path: "/api")
+      end.to raise_error(X402::ConfigurationError, /amount_sats.*amount_usd/)
+    end
   end
 
   describe "#find_route" do

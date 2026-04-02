@@ -47,7 +47,7 @@ module X402
         end
 
         headers = {
-          "x-bsv-payment-satoshis-required" => route.amount_sats.to_s,
+          "x-bsv-payment-satoshis-required" => route.resolve_amount_sats.to_s,
           "x-bsv-payment-derivation-prefix" => prefix
         }
 
@@ -141,11 +141,13 @@ module X402
 
       def verify_payment_output!(transaction, route, expected_script)
         found = transaction.outputs.any? do |output|
-          output.locking_script == expected_script && output.satoshis >= route.amount_sats
+          output.locking_script == expected_script && output.satoshis >= route.resolve_amount_sats
         end
         return if found
 
-        raise VerificationError.new("no output pays >= #{route.amount_sats} sats to derived address", status: 402)
+        raise VerificationError.new(
+          "no output pays >= #{route.resolve_amount_sats} sats to derived address", status: 402
+        )
       end
 
       def broadcast!(transaction)
