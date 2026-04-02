@@ -231,4 +231,65 @@ RSpec.describe X402::PaymentObserver do
       expect(mock_worker).to have_received(:enqueue).once
     end
   end
+
+  describe "custom recogniser" do
+    let(:recognised_hex) { payee_hex }
+    let(:recogniser) do
+      hex = recognised_hex
+      Object.new.tap do |r|
+        r.define_singleton_method(:ours?) { |script_hex| script_hex == hex }
+      end
+    end
+
+    let(:app) do
+      described_class.new(inner_app, worker: mock_worker, recogniser: recogniser)
+    end
+
+    it "enqueues tx when recogniser returns true" do
+      env = Rack::MockRequest.env_for("/anything", method: "POST")
+      env["HTTP_PAYMENT_SIGNATURE"] = build_proof
+
+      app.call(env)
+
+      expect(mock_worker).to have_received(:enqueue).once
+    end
+
+    it "rejects tx when recogniser returns false" do
+      other_payee = "76a914#{"bb" * 20}88ac"
+      env = Rack::MockRequest.env_for("/anything", method: "POST")
+      env["HTTP_PAYMENT_SIGNATURE"] = build_proof(locking_script_hex: other_payee)
+
+      app.call(env)
+
+      expect(mock_worker).not_to have_received(:enqueue)
+    end
+
+    it "takes precedence over payee_locking_script_hex" do
+      # Recogniser that rejects everything
+      reject_all = Object.new
+      reject_all.define_singleton_method(:ours?) { |_| false }
+
+      app_with_both = described_class.new(
+        inner_app, worker: mock_worker,
+                   recogniser: reject_all,
+                   payee_locking_script_hex: payee_hex
+      )
+
+      env = Rack::MockRequest.env_for("/anything", method: "POST")
+      env["HTTP_PAYMENT_SIGNATURE"] = build_proof
+
+      app_with_both.call(env)
+
+      # Recogniser wins — rejects even though static payee matches
+      expect(mock_worker).not_to have_received(:enqueue)
+    end
+  end
+
+  describe "configuration validation" do
+    it "raises when neither recogniser nor payee_locking_script_hex provided" do
+      expect do
+        described_class.new(inner_app, worker: mock_worker)
+      end.to raise_error(X402::ConfigurationError, /recogniser.*payee_locking_script_hex/)
+    end
+  end
 end
