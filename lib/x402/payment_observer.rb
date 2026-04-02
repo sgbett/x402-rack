@@ -9,16 +9,25 @@ module X402
   # enqueues them for settlement. Never gates access — requests always
   # pass through regardless of payment presence or validity.
   #
-  # Only enqueues transactions that contain at least one output paying
-  # the configured payee — the observer is not an open relay.
+  # Only enqueues transactions that contain at least one recognised output
+  # — the observer is not an open relay.
   #
-  # Sits alongside +X402::Middleware+ in the Rack stack:
+  # == Static payee (simple)
   #
   #   use X402::PaymentObserver,
   #     worker: settlement_worker,
   #     payee_locking_script_hex: "76a914...88ac"
-  #   use X402::Middleware
-  #   run MyApp
+  #
+  # == Recogniser (derived addresses / payment channels)
+  #
+  #   use X402::PaymentObserver,
+  #     worker: settlement_worker,
+  #     recogniser: session_tracker   # responds to #ours?(locking_script_hex)
+  #
+  # The recogniser is duck-typed — any object responding to
+  # +#ours?(locking_script_hex)+ qualifies. For payment channels with
+  # BRC-29 derived addresses, the recogniser tracks which derived addresses
+  # belong to active sessions.
   #
   # Any object responding to +#enqueue(tx_binary)+ satisfies the worker
   # interface (e.g. +X402::SettlementWorker+, a Sidekiq job, etc.).
@@ -27,16 +36,17 @@ module X402
 
     # @param app [#call] next Rack app in the stack
     # @param worker [#enqueue] settlement worker for background broadcast
-    # @param payee_locking_script_hex [String] payee script hex — only txs
-    #   with at least one output paying this script are enqueued
+    # @param payee_locking_script_hex [String, nil] static payee script hex
+    # @param recogniser [#ours?, nil] object that recognises derived payment addresses.
+    #   Takes precedence over +payee_locking_script_hex+ when both are provided.
     # @param proof_headers [Array<String>] HTTP header names to watch for payments
     # @param on_payment [#call, nil] optional callback invoked with the raw tx
     #   binary after successful enqueue, for application-level tracking
-    def initialize(app, worker:, payee_locking_script_hex:,
+    def initialize(app, worker:, payee_locking_script_hex: nil, recogniser: nil,
                    proof_headers: DEFAULT_PROOF_HEADERS, on_payment: nil)
       @app = app
       @worker = worker
-      @payee_script = ::BSV::Script::Script.from_hex(payee_locking_script_hex)
+      @recogniser = build_recogniser(recogniser, payee_locking_script_hex)
       @proof_headers = proof_headers
       @on_payment = on_payment
     end
@@ -47,6 +57,17 @@ module X402
     end
 
     private
+
+    def build_recogniser(recogniser, payee_hex)
+      return recogniser if recogniser
+
+      unless payee_hex
+        raise ConfigurationError,
+              "PaymentObserver requires recogniser: or payee_locking_script_hex:"
+      end
+
+      StaticRecogniser.new(payee_hex)
+    end
 
     def observe_payment(env)
       @proof_headers.each do |header_name|
@@ -77,16 +98,28 @@ module X402
 
       tx_binary = [rawtx_hex].pack("H*")
       tx = ::BSV::Transaction::Transaction.from_binary(tx_binary)
-      return unless pays_us?(tx)
+      return unless recognised?(tx)
 
       tx_binary
     rescue StandardError
       nil
     end
 
-    def pays_us?(transaction)
+    def recognised?(transaction)
       transaction.outputs.any? do |output|
-        output.locking_script.to_hex == @payee_script.to_hex
+        @recogniser.ours?(output.locking_script.to_hex)
+      end
+    end
+
+    # Built-in recogniser for a single static payee address.
+    # Used when +payee_locking_script_hex+ is provided without a custom recogniser.
+    class StaticRecogniser
+      def initialize(payee_locking_script_hex)
+        @payee_hex = payee_locking_script_hex
+      end
+
+      def ours?(locking_script_hex)
+        locking_script_hex == @payee_hex
       end
     end
   end
