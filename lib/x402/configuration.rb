@@ -2,13 +2,13 @@
 
 module X402
   class Configuration
-    Route = Struct.new(:http_method, :path, :amount_sats, keyword_init: true)
+    Route = Struct.new(:http_method, :path, :amount_sats, :arc_wait_for, keyword_init: true)
 
     GATEWAY_METHODS = %i[challenge_headers proof_header_names settle!].freeze
 
     PAY_GATEWAY_KNOWN_OPTS = %i[
       arc_client payee_locking_script_hex arc_wait_for arc_timeout
-      binding_mode wallet challenge_secret
+      binding_mode wallet challenge_secret settlement_worker
     ].freeze
 
     PROOF_GATEWAY_KNOWN_OPTS = %i[
@@ -76,8 +76,15 @@ module X402
     # @param method [String] HTTP method or "*" for any
     # @param path [String, Regexp] exact path or pattern
     # @param amount_sats [Integer] required payment in satoshis
-    def protect(method:, path:, amount_sats:)
-      @routes << Route.new(http_method: method.upcase, path: path, amount_sats: amount_sats)
+    # @param arc_wait_for [String, Symbol, nil] per-route ARC settlement override.
+    #   +nil+ (default) uses the gateway's +arc_wait_for+ setting.
+    #   A string value (e.g. +"SEEN_ON_NETWORK"+, +"MINED"+) overrides the
+    #   gateway default for synchronous broadcast.
+    #   +:async+ validates the transaction locally then enqueues it for
+    #   background settlement via the gateway's +settlement_worker+, returning
+    #   200 immediately without waiting for ARC confirmation.
+    def protect(method:, path:, amount_sats:, arc_wait_for: nil)
+      @routes << Route.new(http_method: method.upcase, path: path, amount_sats: amount_sats, arc_wait_for: arc_wait_for)
     end
 
     # Find the matching route for a request method and path.
@@ -169,7 +176,7 @@ module X402
       opts = { arc_client: options[:arc_client] || shared_arc_client }
       opts[:payee_locking_script_hex] = options[:payee_locking_script_hex] || payee_locking_script_hex
       opts[:wallet] = wallet if wallet
-      %i[arc_wait_for arc_timeout binding_mode challenge_secret].each do |key|
+      %i[arc_wait_for arc_timeout binding_mode challenge_secret settlement_worker].each do |key|
         opts[key] = options[key] if options.key?(key)
       end
       klass.new(**opts)

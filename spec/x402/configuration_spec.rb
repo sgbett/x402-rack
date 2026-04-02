@@ -54,6 +54,16 @@ RSpec.describe X402::Configuration do
       config.protect(method: "get", path: "/api", amount_sats: 100)
       expect(config.routes.first.http_method).to eq("GET")
     end
+
+    it "stores arc_wait_for when provided" do
+      config.protect(method: "GET", path: "/api", amount_sats: 100, arc_wait_for: "SEEN_ON_NETWORK")
+      expect(config.routes.first.arc_wait_for).to eq("SEEN_ON_NETWORK")
+    end
+
+    it "defaults arc_wait_for to nil" do
+      config.protect(method: "GET", path: "/api", amount_sats: 100)
+      expect(config.routes.first.arc_wait_for).to be_nil
+    end
   end
 
   describe "#find_route" do

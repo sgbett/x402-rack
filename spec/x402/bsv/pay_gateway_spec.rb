@@ -274,5 +274,94 @@ RSpec.describe X402::BSV::PayGateway do
           .to raise_error(X402::VerificationError, /binding/)
       end
     end
+
+    context "async settlement" do
+      let(:mock_worker) { instance_double("X402::SettlementWorker") }
+
+      let(:async_gateway) do
+        described_class.new(
+          arc_client: mock_arc,
+          payee_locking_script_hex: payee_hex,
+          settlement_worker: mock_worker
+        )
+      end
+
+      let(:async_route) do
+        X402::Configuration::Route.new(
+          http_method: "GET", path: "/premium", amount_sats: 100, arc_wait_for: :async
+        )
+      end
+
+      def async_proof(gw_instance)
+        tx = build_valid_tx
+        encode_payment_payload(tx, gateway_instance: gw_instance)
+      end
+
+      it "enqueues to worker when route arc_wait_for is :async" do
+        allow(mock_worker).to receive(:enqueue)
+        proof = async_proof(async_gateway)
+
+        result = async_gateway.settle!("Payment-Signature", proof, request, async_route)
+
+        expect(result).to be_a(X402::SettlementResult)
+        expect(mock_worker).to have_received(:enqueue).once
+      end
+
+      it "raises ConfigurationError when :async but no worker" do
+        no_worker_gw = described_class.new(
+          arc_client: mock_arc,
+          payee_locking_script_hex: payee_hex
+        )
+
+        proof = async_proof(no_worker_gw)
+        expect { no_worker_gw.settle!("Payment-Signature", proof, request, async_route) }
+          .to raise_error(X402::ConfigurationError, /settlement_worker/)
+      end
+
+      it "falls back to gateway default when route arc_wait_for is nil" do
+        proof = async_proof(async_gateway)
+
+        # nil arc_wait_for route — should broadcast synchronously with default
+        result = async_gateway.settle!("Payment-Signature", proof, request, route)
+        expect(result).to be_a(X402::SettlementResult)
+      end
+
+      it "uses route arc_wait_for string to override gateway default" do
+        mined_route = X402::Configuration::Route.new(
+          http_method: "GET", path: "/premium", amount_sats: 100, arc_wait_for: "MINED"
+        )
+
+        # Create a custom arc that records the wait_for argument
+        recorded_wait_for = nil
+        custom_arc = Object.new
+        custom_arc.define_singleton_method(:broadcast) do |_tx, **kwargs|
+          recorded_wait_for = kwargs[:wait_for]
+          Struct.new(:txid, :tx_status).new("cc" * 32, "MINED")
+        end
+
+        custom_gw = described_class.new(
+          arc_client: custom_arc,
+          payee_locking_script_hex: payee_hex
+        )
+
+        proof = async_proof(custom_gw)
+        custom_gw.settle!("Payment-Signature", proof, request, mined_route)
+
+        expect(recorded_wait_for).to eq("MINED")
+      end
+
+      it "runs all validation before async enqueue" do
+        allow(mock_worker).to receive(:enqueue)
+
+        # Build proof with wrong network — should fail validation before reaching enqueue
+        tx = build_valid_tx
+        proof = encode_payment_payload(tx, accepted_overrides: { "network" => "eip155:1" },
+                                           gateway_instance: async_gateway)
+
+        expect { async_gateway.settle!("Payment-Signature", proof, request, async_route) }
+          .to raise_error(X402::VerificationError, /network/)
+        expect(mock_worker).not_to have_received(:enqueue)
+      end
+    end
   end
 end
