@@ -9,14 +9,21 @@ module X402
     SUPPORTED_SCHEMES = ["bsv-tx-v1"].freeze
     DEFAULT_TTL = 300 # 5 minutes
 
-    attr_reader :version, :scheme, :domain, :method, :path, :query,
-                :req_headers_sha256, :req_body_sha256,
-                :amount_sats, :payee_locking_script_hex,
-                :nonce_txid, :nonce_vout, :nonce_satoshis, :nonce_locking_script_hex,
-                :expires_at, :partial_tx_b64, :payee_sig
+    KNOWN_ATTRS = %i[
+      version scheme domain method path query
+      req_headers_sha256 req_body_sha256
+      amount_sats payee_locking_script_hex
+      nonce_txid nonce_vout nonce_satoshis nonce_locking_script_hex
+      expires_at partial_tx_b64 payee_sig
+    ].freeze
+
+    attr_reader(*KNOWN_ATTRS)
 
     def initialize(attrs = {})
-      attrs.each { |k, v| instance_variable_set(:"@#{k}", v) }
+      attrs.each do |k, v|
+        key = k.to_sym
+        instance_variable_set(:"@#{key}", v) if KNOWN_ATTRS.include?(key)
+      end
     end
 
     def to_h

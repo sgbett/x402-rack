@@ -113,10 +113,13 @@ module X402
           raise VerificationError.new("network mismatch: expected #{NETWORK}", status: 400)
         end
 
-        amount = accepted["amount"].to_i
+        raw_amount = accepted["amount"]
+        amount = raw_amount.is_a?(Integer) ? raw_amount : Integer(raw_amount, 10)
         return unless amount < required_sats
 
         raise VerificationError.new("insufficient amount: #{amount} < #{required_sats}", status: 402)
+      rescue ArgumentError, TypeError
+        raise VerificationError.new("invalid amount field", status: 400)
       end
 
       def decode_transaction(payload)

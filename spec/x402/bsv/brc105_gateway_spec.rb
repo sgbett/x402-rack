@@ -266,7 +266,7 @@ RSpec.describe X402::BSV::BRC105Gateway do
         payload = JSON.generate({ "derivationPrefix" => prefix, "derivationSuffix" => "", "transaction" => "AA==" })
 
         expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-          .to raise_error(X402::VerificationError, /missing derivationSuffix/) { |e| expect(e.status).to eq(400) }
+          .to raise_error(X402::VerificationError, /invalid derivationSuffix format/) { |e| expect(e.status).to eq(400) }
       end
     end
 
