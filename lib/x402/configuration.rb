@@ -17,7 +17,7 @@ module X402
 
     PAY_GATEWAY_KNOWN_OPTS = %i[
       arc_client payee_locking_script_hex arc_wait_for arc_timeout
-      binding_mode wallet challenge_secret settlement_worker
+      binding_mode wallet challenge_secret settlement_worker txid_store
     ].freeze
 
     PROOF_GATEWAY_KNOWN_OPTS = %i[
@@ -211,7 +211,7 @@ module X402
       opts = { arc_client: options[:arc_client] || shared_arc_client }
       opts[:payee_locking_script_hex] = options[:payee_locking_script_hex] || payee_locking_script_hex
       opts[:wallet] = wallet if wallet
-      %i[arc_wait_for arc_timeout binding_mode challenge_secret settlement_worker].each do |key|
+      %i[arc_wait_for arc_timeout binding_mode challenge_secret settlement_worker txid_store].each do |key|
         opts[key] = options[key] if options.key?(key)
       end
       klass.new(**opts)

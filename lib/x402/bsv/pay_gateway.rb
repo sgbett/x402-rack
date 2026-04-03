@@ -28,10 +28,12 @@ module X402
       # @param binding_mode [Symbol] :strict or :permissive for OP_RETURN binding
       # @param payee_locking_script_hex [String, nil] payee script (falls back to config)
       # @param settlement_worker [#enqueue, nil] async settlement worker
+      # @param txid_store [#seen?, #record!, nil] optional txid deduplication store.
+      #   When provided, rejects proofs whose txid has already been settled.
       def initialize(arc_client:, arc_wait_for: DEFAULT_ARC_WAIT_FOR,
-                     arc_timeout: DEFAULT_ARC_TIMEOUT, binding_mode: :permissive,
+                     arc_timeout: DEFAULT_ARC_TIMEOUT, binding_mode: :strict,
                      payee_locking_script_hex: nil, wallet: nil, challenge_secret: nil,
-                     settlement_worker: nil)
+                     settlement_worker: nil, txid_store: nil)
         super(payee_locking_script_hex: payee_locking_script_hex, wallet: wallet,
               challenge_secret: challenge_secret)
         @arc_client = arc_client
@@ -39,6 +41,7 @@ module X402
         @arc_timeout = arc_timeout
         @binding_mode = binding_mode
         @settlement_worker = settlement_worker
+        @txid_store = txid_store
       end
 
       def challenge_headers(rack_request, route)
@@ -58,9 +61,11 @@ module X402
         pay_to_sig = payload.dig("accepted", "extra", "payToSig")
         verify_pay_to_signature!(accepted_payee, pay_to_sig)
         transaction = decode_transaction(payload)
+        check_txid_not_seen!(transaction)
         verify_payment_output!(transaction, required_sats, accepted_payee)
         verify_binding!(transaction, rack_request)
         settle_transaction!(transaction, route)
+        record_txid!(transaction)
         build_settlement_result(transaction)
       end
 
@@ -142,6 +147,21 @@ module X402
         return if found
 
         raise VerificationError.new("no output pays >= #{required_sats} sats to payee", status: 402)
+      end
+
+      def check_txid_not_seen!(transaction)
+        return unless @txid_store
+
+        txid = transaction.txid_hex
+        return unless @txid_store.seen?(txid)
+
+        raise VerificationError.new("transaction already settled", status: 400)
+      end
+
+      def record_txid!(transaction)
+        return unless @txid_store
+
+        @txid_store.record!(transaction.txid_hex)
       end
 
       def verify_binding!(transaction, rack_request)
