@@ -100,10 +100,11 @@ module X402
       end
 
       def validate_derivation_component!(name, value)
-        raise VerificationError.new("missing #{name}", status: 400) if value.nil? || value.empty?
-        return if value.bytesize <= MAX_DERIVATION_BYTES && value.match?(/\A[0-9a-f]+\z/)
-
-        raise VerificationError.new("invalid #{name} format", status: 400)
+        raise VerificationError.new("missing #{name}", status: 400) if value.nil?
+        unless value.is_a?(String) && !value.empty? &&
+               value.bytesize <= MAX_DERIVATION_BYTES && value.match?(/\A[0-9a-f]+\z/)
+          raise VerificationError.new("invalid #{name} format", status: 400)
+        end
       end
 
       def consume_prefix!(prefix)
