@@ -61,11 +61,10 @@ module X402
         pay_to_sig = payload.dig("accepted", "extra", "payToSig")
         verify_pay_to_signature!(accepted_payee, pay_to_sig)
         transaction = decode_transaction(payload)
-        check_txid_not_seen!(transaction)
+        check_txid_unique!(transaction)
         verify_payment_output!(transaction, required_sats, accepted_payee)
         verify_binding!(transaction, rack_request)
         settle_transaction!(transaction, route)
-        record_txid!(transaction)
         build_settlement_result(transaction)
       end
 
@@ -149,19 +148,11 @@ module X402
         raise VerificationError.new("no output pays >= #{required_sats} sats to payee", status: 402)
       end
 
-      def check_txid_not_seen!(transaction)
+      def check_txid_unique!(transaction)
         return unless @txid_store
-
-        txid = transaction.txid_hex
-        return unless @txid_store.seen?(txid)
+        return if @txid_store.record_if_unseen!(transaction.txid_hex)
 
         raise VerificationError.new("transaction already settled", status: 400)
-      end
-
-      def record_txid!(transaction)
-        return unless @txid_store
-
-        @txid_store.record!(transaction.txid_hex)
       end
 
       def verify_binding!(transaction, rack_request)

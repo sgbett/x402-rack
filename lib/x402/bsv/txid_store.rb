@@ -8,8 +8,8 @@ module X402
     #
     # Prevents the same transaction from being accepted twice.
     # Duck-type contract — any backend must implement:
-    #   seen?(txid)  — returns true if txid was already recorded
-    #   record!(txid) — records the txid as seen
+    #   record_if_unseen!(txid) — atomically records the txid and returns true
+    #     if it was not already seen. Returns false if already recorded.
     module TxidStore
       # In-memory backend suitable for development and single-process deployments.
       # Thread-safe via Monitor. Entries expire after +ttl+ seconds.
@@ -29,21 +29,19 @@ module X402
           @max_size = max_size
         end
 
-        # Returns true if the txid has already been recorded and hasn't expired.
-        def seen?(txid)
-          @monitor.synchronize do
-            entry = @entries[txid]
-            entry && !expired?(entry)
-          end
-        end
-
-        # Records the txid as seen. Purges expired entries first.
-        def record!(txid)
+        # Atomically checks and records a txid.
+        # Returns true if the txid was new (now recorded).
+        # Returns false if already seen (duplicate).
+        def record_if_unseen!(txid)
           @monitor.synchronize do
             purge_expired!
+
+            entry = @entries[txid]
+            return false if entry && !expired?(entry)
+
             @entries[txid] = monotonic_now
-            # Evict oldest if over capacity
             evict_oldest! if @entries.size > @max_size
+            true
           end
         end
 
