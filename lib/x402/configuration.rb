@@ -127,12 +127,17 @@ module X402
     private
 
     def warn_operational_concerns!
+      return if gateway_specs.empty? # gateways= was used directly — specs not relevant
+
       warn_ephemeral_challenge_secret!
       warn_in_memory_prefix_store!
     end
 
     def warn_ephemeral_challenge_secret!
-      needs_warning = gateway_specs.any? { |_class_name, options| !options.key?(:challenge_secret) }
+      secret_gateways = %w[X402::BSV::PayGateway X402::BSV::ProofGateway]
+      needs_warning = gateway_specs.any? do |class_name, options|
+        secret_gateways.include?(class_name) && !options[:challenge_secret]
+      end
       return unless needs_warning
 
       warn "[x402] challenge_secret is auto-generated. " \
@@ -142,7 +147,7 @@ module X402
 
     def warn_in_memory_prefix_store!
       needs_warning = gateway_specs.any? do |class_name, options|
-        class_name == "X402::BSV::BRC105Gateway" && !options.key?(:prefix_store)
+        class_name == "X402::BSV::BRC105Gateway" && !options[:prefix_store]
       end
       return unless needs_warning
 
