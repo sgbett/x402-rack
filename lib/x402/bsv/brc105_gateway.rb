@@ -23,6 +23,7 @@ module X402
       PROOF_HEADER = "x-bsv-payment"
       NETWORK = "bsv:mainnet"
       COMPRESSED_PUBKEY_HEX = /\A0[23][0-9a-fA-F]{64}\z/
+      MAX_DERIVATION_BYTES = 64
 
       # @param key_deriver [BSV::Wallet::KeyDeriver] provides identity key + BRC-42 derivation
       # @param prefix_store [#store!, #valid?, #consume!] replay protection for derivation prefixes
@@ -94,8 +95,15 @@ module X402
       end
 
       def validate_prefix_and_suffix!(prefix, suffix)
-        raise VerificationError.new("missing derivationPrefix", status: 400) if prefix.nil? || prefix.empty?
-        raise VerificationError.new("missing derivationSuffix", status: 400) if suffix.nil? || suffix.empty?
+        validate_derivation_component!("derivationPrefix", prefix)
+        validate_derivation_component!("derivationSuffix", suffix)
+      end
+
+      def validate_derivation_component!(name, value)
+        raise VerificationError.new("missing #{name}", status: 400) if value.nil? || value.empty?
+        return if value.bytesize <= MAX_DERIVATION_BYTES && value.match?(/\A[0-9a-f]+\z/)
+
+        raise VerificationError.new("invalid #{name} format", status: 400)
       end
 
       def consume_prefix!(prefix)
