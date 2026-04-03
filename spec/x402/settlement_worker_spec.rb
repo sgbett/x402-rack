@@ -90,6 +90,82 @@ RSpec.describe X402::SettlementWorker do
     end
   end
 
+  describe "on_failure callback" do
+    let(:failures) { [] }
+    let(:callback) { ->(tx, error) { failures << [tx, error] } }
+    let(:worker) { described_class.new(arc_client: arc_client, max_retries: 1, on_failure: callback) }
+    let(:rejected_result) { Struct.new(:tx_status).new("REJECTED") }
+
+    before { allow(worker).to receive(:sleep) }
+
+    it "invokes callback when retries exhausted on bad status" do
+      allow(arc_client).to receive(:broadcast).and_return(rejected_result)
+
+      worker.enqueue(tx_binary)
+      worker.stop
+
+      expect(failures.size).to eq(1)
+      expect(failures.first[0]).to eq(tx_binary)
+      expect(failures.first[1]).to include("REJECTED")
+    end
+
+    it "invokes callback when retries exhausted on exception" do
+      allow(arc_client).to receive(:broadcast).and_raise("connection refused")
+
+      worker.enqueue(tx_binary)
+      worker.stop
+
+      expect(failures.size).to eq(1)
+      expect(failures.first[0]).to eq(tx_binary)
+      expect(failures.first[1]).to be_a(RuntimeError)
+    end
+
+    it "does not invoke callback on success" do
+      allow(arc_client).to receive(:broadcast).and_return(broadcast_result)
+
+      worker.enqueue(tx_binary)
+      worker.stop
+
+      expect(failures).to be_empty
+    end
+
+    it "survives callback that raises" do
+      bad_callback = ->(_tx, _error) { raise "callback exploded" }
+      w = described_class.new(arc_client: arc_client, max_retries: 0, on_failure: bad_callback)
+      allow(w).to receive(:sleep)
+      allow(arc_client).to receive(:broadcast).and_return(rejected_result)
+
+      w.enqueue(tx_binary)
+      w.stop
+
+      # Worker thread survived — no exception propagated
+      expect(arc_client).to have_received(:broadcast).once
+    end
+  end
+
+  describe "queue capacity" do
+    it "raises VerificationError (503) when queue is full" do
+      small_worker = described_class.new(arc_client: arc_client, max_queue: 2)
+      # Don't start the consumer thread — fill the queue manually
+      allow(arc_client).to receive(:broadcast).and_return(broadcast_result)
+
+      # Fill the queue without starting the worker thread
+      small_worker.instance_variable_get(:@queue).push("tx1")
+      small_worker.instance_variable_get(:@queue).push("tx2")
+
+      expect { small_worker.enqueue("tx3") }
+        .to raise_error(X402::VerificationError, /queue full/) { |e| expect(e.status).to eq(503) }
+
+      small_worker.stop rescue nil # rubocop:disable Style/RescueModifier
+    end
+
+    it "defaults to 1000 capacity" do
+      default_worker = described_class.new(arc_client: arc_client)
+      expect(default_worker.max_queue).to eq(1000)
+      default_worker.stop rescue nil # rubocop:disable Style/RescueModifier
+    end
+  end
+
   describe "#stop" do
     it "drains the queue and joins the thread" do
       allow(arc_client).to receive(:broadcast).and_return(broadcast_result)
