@@ -2,7 +2,7 @@
 
 module X402
   # Background thread that broadcasts transactions to ARC with exponential
-  # backoff retry. Uses Ruby stdlib Thread + SizedQueue (zero dependencies).
+  # backoff retry. Uses Ruby stdlib Thread + Queue (zero dependencies).
   #
   # Any object responding to +#enqueue(tx_binary)+ satisfies the pluggable
   # worker interface expected by PayGateway's async settlement path.
@@ -29,7 +29,7 @@ module X402
       @max_retries = max_retries
       @max_queue = max_queue
       @on_failure = on_failure
-      @queue = SizedQueue.new(max_queue)
+      @queue = Queue.new
       @thread = nil
       @mutex = Mutex.new
     end
@@ -39,10 +39,10 @@ module X402
     # @param tx_binary [String] raw transaction bytes
     # @raise [X402::VerificationError] with status 503 when queue is full
     def enqueue(tx_binary)
+      raise VerificationError.new("settlement queue full — try again later", status: 503) if @queue.size >= @max_queue
+
       ensure_thread_running
-      @queue.push(tx_binary, true) # non_block: true — raises ThreadError if full
-    rescue ThreadError
-      raise VerificationError.new("settlement queue full — try again later", status: 503)
+      @queue.push(tx_binary)
     end
 
     def stop
