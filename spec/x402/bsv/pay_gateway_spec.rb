@@ -21,7 +21,8 @@ RSpec.describe X402::BSV::PayGateway do
   let(:gateway) do
     described_class.new(
       arc_client: mock_arc,
-      payee_locking_script_hex: payee_hex
+      payee_locking_script_hex: payee_hex,
+      binding_mode: :permissive
     )
   end
 
@@ -210,7 +211,7 @@ RSpec.describe X402::BSV::PayGateway do
       end
 
       let(:gateway) do
-        described_class.new(arc_client: failing_arc, payee_locking_script_hex: payee_hex)
+        described_class.new(arc_client: failing_arc, payee_locking_script_hex: payee_hex, binding_mode: :permissive)
       end
 
       it "raises VerificationError with 502" do
@@ -282,7 +283,8 @@ RSpec.describe X402::BSV::PayGateway do
         described_class.new(
           arc_client: mock_arc,
           payee_locking_script_hex: payee_hex,
-          settlement_worker: mock_worker
+          settlement_worker: mock_worker,
+          binding_mode: :permissive
         )
       end
 
@@ -310,7 +312,8 @@ RSpec.describe X402::BSV::PayGateway do
       it "raises ConfigurationError when :async but no worker" do
         no_worker_gw = described_class.new(
           arc_client: mock_arc,
-          payee_locking_script_hex: payee_hex
+          payee_locking_script_hex: payee_hex,
+          binding_mode: :permissive
         )
 
         proof = async_proof(no_worker_gw)
@@ -341,7 +344,8 @@ RSpec.describe X402::BSV::PayGateway do
 
         custom_gw = described_class.new(
           arc_client: custom_arc,
-          payee_locking_script_hex: payee_hex
+          payee_locking_script_hex: payee_hex,
+          binding_mode: :permissive
         )
 
         proof = async_proof(custom_gw)
