@@ -120,10 +120,36 @@ module X402
       validate_payee_source!
       build_gateways_from_specs! if gateways.empty? && !gateway_specs.empty?
       validate_gateways!
+      warn_operational_concerns!
       raise ConfigurationError, "at least one route must be protected" if routes.empty?
     end
 
     private
+
+    def warn_operational_concerns!
+      warn_ephemeral_challenge_secret!
+      warn_in_memory_prefix_store!
+    end
+
+    def warn_ephemeral_challenge_secret!
+      needs_warning = gateway_specs.any? { |_class_name, options| !options.key?(:challenge_secret) }
+      return unless needs_warning
+
+      warn "[x402] challenge_secret is auto-generated. " \
+           "In-flight challenges will fail after process restart. " \
+           "Set challenge_secret: explicitly for production."
+    end
+
+    def warn_in_memory_prefix_store!
+      needs_warning = gateway_specs.any? do |class_name, options|
+        class_name == "X402::BSV::BRC105Gateway" && !options.key?(:prefix_store)
+      end
+      return unless needs_warning
+
+      warn "[x402] BRC105Gateway using in-memory PrefixStore. " \
+           "No replay protection across processes. " \
+           "Use a shared backend (Redis) for multi-process deployments."
+    end
 
     def validate_gateways!
       raise ConfigurationError, "at least one gateway is required" if gateways.nil? || gateways.empty?
