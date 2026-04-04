@@ -85,7 +85,10 @@ RSpec.describe X402::Middleware do
       expect(status).to eq(402)
       expect(headers["x402-challenge"]).to eq("dGVzdC1jaGFsbGVuZ2U")
       parsed = JSON.parse(body.first)
-      expect(parsed["error"]).to eq("Payment Required")
+      expect(parsed["status"]).to eq("error")
+      expect(parsed["code"]).to eq("ERR_PAYMENT_REQUIRED")
+      expect(parsed["satoshisRequired"]).to eq(50)
+      expect(parsed["description"]).to be_a(String)
     end
 
     it "includes challenge headers from all gateways" do

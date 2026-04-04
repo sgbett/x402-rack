@@ -68,7 +68,12 @@ module X402
         end
       end
 
-      body = JSON.generate({ error: "Payment Required" })
+      body = JSON.generate(
+        status: "error",
+        code: "ERR_PAYMENT_REQUIRED",
+        satoshisRequired: route.resolve_amount_sats,
+        description: "A BSV payment is required to access this resource."
+      )
       [402, headers, [body]]
     end
 
