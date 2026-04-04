@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-04
+
+### Changed
+
+- **Default `binding_mode` now `:strict`** — OP_RETURN request binding enforced by default. Set `binding_mode: :permissive` to restore previous behaviour.
+
+### Added
+
+- **Txid deduplication store** — `record_if_unseen!` prevents double-processing of the same transaction across settlement and observer paths.
+
+### Fixed
+
+- **Security audit quick wins** — handle numeric JSON amount, non-string derivation components (H-3, M-2, M-4, M-5).
+- **SettlementWorker hardening** — `on_failure` callback, capped queue via Queue with size check (replaces SizedQueue), exponential backoff improvements.
+- **Atomic txid deduplication** — `record_if_unseen!` provides thread-safe check-and-insert in a single call.
+- **Runtime warnings scoped** — warnings emitted only for relevant gateways, check value not just key presence.
+- **Production environment warnings** — warn on ephemeral `challenge_secret` and in-memory `PrefixStore`.
+
 ## [0.4.0] - 2026-04-03
 
 ### Added
@@ -109,6 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Operations docs** — deployment, performance, treasury/nonce lifecycle.
 - **Ecosystem docs** — Coinbase v2, merkleworks, BRC-105 positioning and header namespace reservations.
 
+[0.5.0]: https://github.com/sgbett/x402-rack/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/sgbett/x402-rack/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sgbett/x402-rack/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sgbett/x402-rack/compare/v0.1.0...v0.2.0
