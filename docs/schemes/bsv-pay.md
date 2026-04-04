@@ -1,5 +1,9 @@
 # BSV-pay Scheme
 
+The default gateway. Direct peer-to-peer payment — client pays server, server broadcasts to the network.
+
+## Description
+
 Server broadcasts via ARC. Uses Coinbase v2 header spec. Minimal infrastructure — ARC only, no treasury, no nonces.
 
 ## Headers

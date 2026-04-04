@@ -1,11 +1,15 @@
 # BSV-proof Scheme (merkleworks x402)
 
+The [merkleworks x402](https://x402.merkleworks.io) implementation. Client broadcasts and proves payment via mempool.
+
 !!! danger "Experimental — not production-ready"
     The ProofGateway implementation is incomplete and under active development.
     The nonce provider interface, Profile B provenance verification, and mempool
     checking behaviour may change without notice. **Do not use in production.**
     For production BSV payments, use [BSV-pay](bsv-pay.md) (PayGateway) or
     [BRC-105](brc-105.md) (BRC105Gateway).
+
+## Description
 
 Client broadcasts, server checks mempool. Proof-of-payment model. Nonce-bound with request binding.
 
