@@ -170,6 +170,11 @@ module X402
         raise VerificationError.new("ARC broadcast failed", status: 502)
       end
 
+      # NOTE: x-bsv-payment-satoshis-paid reflects the amount claimed in the
+      # BEEF transaction, verified against the derived payment script but set
+      # before ARC broadcast confirmation. It is not an on-chain-confirmed
+      # value. Downstream consumers requiring confirmed amounts should use
+      # the txid to query chain state independently.
       def build_settlement_result(transaction, paid_sats)
         receipt = {
           "success" => true,
