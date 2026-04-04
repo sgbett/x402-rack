@@ -39,14 +39,18 @@ module X402
     # @param payee_locking_script_hex [String, nil] static payee script hex
     # @param recogniser [#ours?, nil] object that recognises derived payment addresses.
     #   Takes precedence over +payee_locking_script_hex+ when both are provided.
+    # @param extractor [#call, nil] extracts a +BSV::Transaction::Transaction+ from a
+    #   raw proof header value. Returns a Transaction or +nil+ to skip.
+    #   Defaults to +CoinbaseV2Extractor+ (Base64-JSON envelope with +payload.rawtx+).
     # @param proof_headers [Array<String>] HTTP header names to watch for payments
     # @param on_payment [#call, nil] optional callback invoked with the raw tx
     #   binary after successful enqueue, for application-level tracking
     def initialize(app, worker:, payee_locking_script_hex: nil, recogniser: nil,
-                   proof_headers: DEFAULT_PROOF_HEADERS, on_payment: nil)
+                   extractor: nil, proof_headers: DEFAULT_PROOF_HEADERS, on_payment: nil)
       @app = app
       @worker = worker
       @recogniser = build_recogniser(recogniser, payee_locking_script_hex)
+      @extractor = build_extractor(extractor)
       @proof_headers = proof_headers
       @on_payment = on_payment
     end
@@ -75,6 +79,17 @@ module X402
       StaticRecogniser.new(payee_hex)
     end
 
+    def build_extractor(extractor)
+      return CoinbaseV2Extractor.new unless extractor
+
+      unless extractor.respond_to?(:call)
+        raise ConfigurationError,
+              "PaymentObserver extractor must respond to #call(proof_payload)"
+      end
+
+      extractor
+    end
+
     def observe_payment(env)
       @proof_headers.each do |header_name|
         rack_key = "HTTP_#{header_name.upcase.tr("-", "_")}"
@@ -97,16 +112,11 @@ module X402
     end
 
     def extract_and_validate(proof_payload)
-      json = Base64.strict_decode64(proof_payload)
-      payload = JSON.parse(json)
-      rawtx_hex = payload.dig("payload", "rawtx")
-      return unless rawtx_hex
+      transaction = @extractor.call(proof_payload)
+      return unless transaction
+      return unless recognised?(transaction)
 
-      tx_binary = [rawtx_hex].pack("H*")
-      tx = ::BSV::Transaction::Transaction.from_binary(tx_binary)
-      return unless recognised?(tx)
-
-      tx_binary
+      transaction.to_binary
     rescue StandardError
       nil
     end
@@ -114,6 +124,23 @@ module X402
     def recognised?(transaction)
       transaction.outputs.any? do |output|
         @recogniser.ours?(output.locking_script.to_hex)
+      end
+    end
+
+    # Built-in extractor for the Coinbase v2 envelope format.
+    # Decodes +Base64(JSON({ payload: { rawtx: "hex" } }))+.
+    # Returns a +BSV::Transaction::Transaction+ or +nil+.
+    class CoinbaseV2Extractor
+      def call(proof_payload)
+        json = Base64.strict_decode64(proof_payload)
+        payload = JSON.parse(json)
+        rawtx_hex = payload.dig("payload", "rawtx")
+        return unless rawtx_hex
+
+        tx_binary = [rawtx_hex].pack("H*")
+        ::BSV::Transaction::Transaction.from_binary(tx_binary)
+      rescue StandardError
+        nil
       end
     end
 

@@ -285,6 +285,67 @@ RSpec.describe X402::PaymentObserver do
     end
   end
 
+  describe "custom extractor" do
+    let(:custom_extractor) do
+      lambda { |proof_payload|
+        raw = JSON.parse(proof_payload)
+        tx_hex = raw["rawtx"]
+        return unless tx_hex
+
+        BSV::Transaction::Transaction.from_binary([tx_hex].pack("H*"))
+      }
+    end
+
+    let(:app) do
+      described_class.new(inner_app, worker: mock_worker,
+                                     payee_locking_script_hex: payee_hex,
+                                     extractor: custom_extractor,
+                                     proof_headers: %w[X-Custom-Payment])
+    end
+
+    def build_custom_proof(locking_script_hex: payee_hex)
+      tx = BSV::Transaction::Transaction.new
+      tx.add_output(BSV::Transaction::TransactionOutput.new(
+                      satoshis: 100,
+                      locking_script: BSV::Script::Script.from_hex(locking_script_hex)
+                    ))
+      JSON.generate("rawtx" => tx.to_binary.unpack1("H*"))
+    end
+
+    it "enqueues tx when custom extractor returns a transaction" do
+      env = Rack::MockRequest.env_for("/anything", method: "POST")
+      env["HTTP_X_CUSTOM_PAYMENT"] = build_custom_proof
+
+      app.call(env)
+
+      expect(mock_worker).to have_received(:enqueue).once
+    end
+
+    it "silently skips when custom extractor returns nil" do
+      nil_extractor = ->(_) {}
+      app_nil = described_class.new(inner_app, worker: mock_worker,
+                                               payee_locking_script_hex: payee_hex,
+                                               extractor: nil_extractor)
+
+      env = Rack::MockRequest.env_for("/anything", method: "POST")
+      env["HTTP_PAYMENT_SIGNATURE"] = "anything"
+
+      app_nil.call(env)
+
+      expect(mock_worker).not_to have_received(:enqueue)
+    end
+
+    it "ignores default Coinbase v2 format when custom extractor is set" do
+      env = Rack::MockRequest.env_for("/anything", method: "POST")
+      env["HTTP_X_CUSTOM_PAYMENT"] = build_proof # Coinbase v2 format
+
+      app.call(env)
+
+      # Custom extractor can't parse Coinbase v2 format → silently skips
+      expect(mock_worker).not_to have_received(:enqueue)
+    end
+  end
+
   describe "configuration validation" do
     it "raises when neither recogniser nor payee_locking_script_hex provided" do
       expect do
@@ -297,6 +358,15 @@ RSpec.describe X402::PaymentObserver do
       expect do
         described_class.new(inner_app, worker: mock_worker, recogniser: bad_recogniser)
       end.to raise_error(X402::ConfigurationError, /ours\?/)
+    end
+
+    it "raises when extractor does not respond to #call" do
+      bad_extractor = Object.new
+      expect do
+        described_class.new(inner_app, worker: mock_worker,
+                                       payee_locking_script_hex: payee_hex,
+                                       extractor: bad_extractor)
+      end.to raise_error(X402::ConfigurationError, /extractor/)
     end
   end
 end
