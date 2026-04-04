@@ -13,7 +13,7 @@ GEM
   specs:
     ast (2.4.3)
     base64 (0.3.0)
-    bsv-sdk (0.4.0)
+    bsv-sdk (0.6.0)
     bsv-wallet (0.2.0)
       base64 (~> 0.2)
       bsv-sdk (~> 0.4)
@@ -25,7 +25,7 @@ GEM
     json-canonicalization (1.0.0)
     language_server-protocol (3.17.0.5)
     lint_roller (1.1.0)
-    parallel (1.27.0)
+    parallel (1.28.0)
     parser (3.3.11.1)
       ast (~> 2.4.1)
       racc
@@ -34,7 +34,7 @@ GEM
       date
       stringio
     racc (1.8.1)
-    rack (3.2.5)
+    rack (3.2.6)
     rackup (2.3.1)
       rack (>= 3)
     rainbow (3.1.1)
@@ -43,7 +43,7 @@ GEM
       erb
       psych (>= 4.0.0)
       tsort
-    regexp_parser (2.11.3)
+    regexp_parser (2.12.0)
     rspec (3.13.2)
       rspec-core (~> 3.13.0)
       rspec-expectations (~> 3.13.0)
