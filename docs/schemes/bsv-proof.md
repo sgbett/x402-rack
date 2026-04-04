@@ -1,5 +1,12 @@
 # BSV-proof Scheme (merkleworks x402)
 
+!!! danger "Experimental — not production-ready"
+    The ProofGateway implementation is incomplete and under active development.
+    The nonce provider interface, Profile B provenance verification, and mempool
+    checking behaviour may change without notice. **Do not use in production.**
+    For production BSV payments, use [BSV-pay](bsv-pay.md) (PayGateway) or
+    [BRC-105](brc-105.md) (BRC105Gateway).
+
 Client broadcasts, server checks mempool. Proof-of-payment model. Nonce-bound with request binding.
 
 ## Headers
