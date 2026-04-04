@@ -70,4 +70,4 @@ See [operations/performance.md](../operations/performance.md) for scaling consid
 
 ## Process Flow
 
-See [process-flow/pay_gateway.md](../process-flow/pay_gateway.md) for sequence diagrams.
+See [process-flow/pay-gateway.md](../process-flow/pay-gateway.md) for sequence diagrams.

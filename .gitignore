@@ -14,3 +14,4 @@
 spec/e2e/logs/
 *.gem
 docs/reference/
+site/
