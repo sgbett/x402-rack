@@ -13,3 +13,4 @@
 .mcp.json
 spec/e2e/logs/
 *.gem
+docs/reference/

@@ -1,0 +1,68 @@
+site_name: x402-rack
+site_description: Rack middleware for payment-gated HTTP using BSV
+site_url: https://sgbett.github.io/x402-rack/
+repo_url: https://github.com/sgbett/x402-rack
+repo_name: sgbett/x402-rack
+
+theme:
+  name: material
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Ecosystem: ecosystem.md
+  - Schemes:
+      - BSV-pay: schemes/bsv-pay.md
+      - BSV-proof: schemes/bsv-proof.md
+      - BRC-105: schemes/brc-105.md
+  - Process Flows:
+      - PayGateway: process-flow/pay-gateway.md
+      - ProofGateway: process-flow/proof-gateway.md
+      - BRC105Gateway: process-flow/brc105-gateway.md
+  - Operations:
+      - Deployment: operations/deployment.md
+      - Performance: operations/performance.md
+      - Treasury: operations/treasury.md
+  - Client Integration: client-integration.md
+  - Security: security.md
+  - API Reference: reference/index.md
