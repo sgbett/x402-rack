@@ -59,6 +59,11 @@ module X402
       nil
     end
 
+    # Challenge response body follows BRC-105 §6.2 format.
+    # Settlement errors (e.g. underpayment 402, bad request 400) use the
+    # generic {"error": reason} shape via error_response — these are
+    # distinct: the challenge tells the client what to pay, whereas a
+    # settlement error explains why a submitted payment was rejected.
     def issue_challenge(request, route, config)
       headers = { "content-type" => "application/json" }
 
@@ -68,7 +73,12 @@ module X402
         end
       end
 
-      body = JSON.generate({ error: "Payment Required" })
+      body = JSON.generate(
+        status: "error",
+        code: "ERR_PAYMENT_REQUIRED",
+        satoshisRequired: route.resolve_amount_sats,
+        description: "A BSV payment is required to access this resource."
+      )
       [402, headers, [body]]
     end
 

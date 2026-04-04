@@ -24,109 +24,118 @@ RSpec.describe X402::BSV::BRC105Gateway do
     Rack::Request.new(env)
   end
 
-  describe "#challenge_headers" do
+  # ---------------------------------------------------------------------------
+  # §5.2 Payment Headers / §6.2 Server's 402 Response
+  # ---------------------------------------------------------------------------
+  describe "§5.2/§6.2 — 402 challenge headers" do
     context "standalone mode (no BRC-103)" do
       let(:request) { mock_request }
       let(:headers) { gateway.challenge_headers(request, route) }
 
-      it "returns all three x-bsv-payment headers" do
+      it "includes all four required x-bsv-payment headers" do
         expect(headers).to include(
+          "x-bsv-payment-version",
           "x-bsv-payment-satoshis-required",
           "x-bsv-payment-derivation-prefix",
           "x-bsv-payment-identity-key"
         )
       end
 
-      it "sets satoshis-required to the route amount" do
+      # §5.2: "The current supported version is 1.0."
+      it "sets x-bsv-payment-version to '1.0'" do
+        expect(headers["x-bsv-payment-version"]).to eq("1.0")
+      end
+
+      # §5.2: "Integer number of satoshis needed for this request."
+      it "sets x-bsv-payment-satoshis-required to the route amount" do
         expect(headers["x-bsv-payment-satoshis-required"]).to eq("1000")
       end
 
+      # §5.2: "Payment-level nonce for deriving the payment output script."
       it "returns a 32-character hex derivation prefix" do
         expect(headers["x-bsv-payment-derivation-prefix"]).to match(/\A[0-9a-f]{32}\z/)
       end
 
-      it "returns the key deriver identity key" do
+      # Standalone mode: identity key must be present for clients without BRC-103
+      it "includes the server identity key" do
         expect(headers["x-bsv-payment-identity-key"]).to eq(identity_key)
       end
-
-      it "stores the prefix in the prefix store" do
-        prefix = headers["x-bsv-payment-derivation-prefix"]
-        expect(prefix_store.valid?(prefix)).to be true
-      end
     end
 
-    context "when prefix store is full" do
-      let(:full_store) { X402::BSV::PrefixStore::Memory.new(max_issued: 0) }
-      let(:full_gateway) do
-        described_class.new(key_deriver: key_deriver, prefix_store: full_store, arc_client: arc_client)
-      end
-
-      it "raises VerificationError with 503" do
-        expect { full_gateway.challenge_headers(mock_request, route) }
-          .to raise_error(X402::VerificationError, /at capacity/) { |e| expect(e.status).to eq(503) }
-      end
-    end
-
+    # §4: BRC-105 sits on top of BRC-103/104. When mutual auth is present,
+    # the identity key is already known — no need to repeat it in headers.
     context "with BRC-103 identity key in env" do
       let(:request) { mock_request("brc103.identity_key" => "02#{"cd" * 32}") }
       let(:headers) { gateway.challenge_headers(request, route) }
 
-      it "returns two headers (no identity key)" do
+      it "omits the identity key header" do
+        expect(headers).not_to have_key("x-bsv-payment-identity-key")
+      end
+
+      it "still includes version, satoshis-required, and derivation-prefix" do
         expect(headers.keys).to contain_exactly(
+          "x-bsv-payment-version",
           "x-bsv-payment-satoshis-required",
           "x-bsv-payment-derivation-prefix"
         )
       end
-
-      it "omits the identity key header" do
-        expect(headers).not_to have_key("x-bsv-payment-identity-key")
-      end
     end
 
-    context "with empty string brc103.identity_key (treated as absent)" do
-      let(:request) { mock_request("brc103.identity_key" => "") }
-      let(:headers) { gateway.challenge_headers(request, route) }
-
-      it "includes the identity key header" do
+    context "BRC-103 identity key edge cases" do
+      it "treats empty string as absent (includes identity key)" do
+        headers = gateway.challenge_headers(mock_request("brc103.identity_key" => ""), route)
         expect(headers).to include("x-bsv-payment-identity-key")
       end
-    end
 
-    context "with nil brc103.identity_key (treated as absent)" do
-      let(:request) { mock_request("brc103.identity_key" => nil) }
-      let(:headers) { gateway.challenge_headers(request, route) }
-
-      it "includes the identity key header" do
+      it "treats nil as absent (includes identity key)" do
+        headers = gateway.challenge_headers(mock_request("brc103.identity_key" => nil), route)
         expect(headers).to include("x-bsv-payment-identity-key")
       end
-    end
 
-    context "with invalid brc103.identity_key (not a compressed pubkey)" do
-      let(:request) { mock_request("brc103.identity_key" => "anyone") }
-      let(:headers) { gateway.challenge_headers(request, route) }
-
-      it "falls back to standalone mode" do
+      it "treats invalid pubkey as absent (includes identity key)" do
+        headers = gateway.challenge_headers(mock_request("brc103.identity_key" => "anyone"), route)
         expect(headers).to include("x-bsv-payment-identity-key")
       end
-    end
 
-    context "with non-hex brc103.identity_key" do
-      let(:request) { mock_request("brc103.identity_key" => "not-a-pubkey") }
-      let(:headers) { gateway.challenge_headers(request, route) }
-
-      it "falls back to standalone mode" do
+      it "treats non-hex string as absent (includes identity key)" do
+        headers = gateway.challenge_headers(mock_request("brc103.identity_key" => "not-a-pubkey"), route)
         expect(headers).to include("x-bsv-payment-identity-key")
       end
     end
   end
 
-  describe "#proof_header_names" do
-    it "returns the x-bsv-payment header" do
+  # ---------------------------------------------------------------------------
+  # §8.1 Replay Attacks — prefix store
+  # ---------------------------------------------------------------------------
+  describe "§8.1 — replay protection (prefix store)" do
+    it "stores the prefix on challenge issuance" do
+      headers = gateway.challenge_headers(mock_request, route)
+      prefix = headers["x-bsv-payment-derivation-prefix"]
+      expect(prefix_store.valid?(prefix)).to be true
+    end
+
+    it "raises 503 when prefix store is at capacity" do
+      full_store = X402::BSV::PrefixStore::Memory.new(max_issued: 0)
+      full_gateway = described_class.new(key_deriver: key_deriver, prefix_store: full_store, arc_client: arc_client)
+
+      expect { full_gateway.challenge_headers(mock_request, route) }
+        .to raise_error(X402::VerificationError, /at capacity/) { |e| expect(e.status).to eq(503) }
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # §5.2 — proof header
+  # ---------------------------------------------------------------------------
+  describe "§5.2 — proof header names" do
+    it "returns x-bsv-payment" do
       expect(gateway.proof_header_names).to eq(["x-bsv-payment"])
     end
   end
 
-  describe "#settle!" do
+  # ---------------------------------------------------------------------------
+  # §6.3 Client Payment Submission / §6.4 Server Payment Verification
+  # ---------------------------------------------------------------------------
+  describe "§6.3/§6.4 — settlement (settle!)" do
     # Use real SDK objects for settle! tests
     let(:server_key) { BSV::Primitives::PrivateKey.generate }
     let(:real_key_deriver) { BSV::Wallet::KeyDeriver.new(server_key) }
@@ -185,8 +194,10 @@ RSpec.describe X402::BSV::BRC105Gateway do
       allow(arc_client).to receive(:broadcast).and_return({ "txid" => "aa" * 32 })
     end
 
-    context "happy path" do
-      it "settles successfully and returns a SettlementResult" do
+    # §6.4 step 2: "Ensuring the output script pays to the correct derivation"
+    #              "Checking if the amount is at least the required satoshisRequired"
+    context "valid payment" do
+      it "returns a SettlementResult with txid and network" do
         transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
         payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
 
@@ -195,10 +206,9 @@ RSpec.describe X402::BSV::BRC105Gateway do
         expect(result).to be_a(X402::SettlementResult)
         expect(result.txid).to eq(transaction.txid_hex)
         expect(result.network).to eq("bsv:mainnet")
-        expect(result.receipt_headers).to have_key("x-bsv-payment-result")
       end
 
-      it "broadcasts via ARC" do
+      it "broadcasts the transaction" do
         transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
         payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
 
@@ -208,8 +218,33 @@ RSpec.describe X402::BSV::BRC105Gateway do
       end
     end
 
-    context "replay protection" do
-      it "rejects a replayed prefix (400)" do
+    # §6.5 Response to Payment-Funded Request
+    context "§6.5 — success response headers" do
+      it "includes x-bsv-payment-result receipt" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        result = real_gateway.settle!("x-bsv-payment", payload, request, route)
+
+        expect(result.receipt_headers).to have_key("x-bsv-payment-result")
+      end
+
+      # §6.5: "x-bsv-payment-satoshis-paid: <value>"
+      it "includes x-bsv-payment-satoshis-paid with actual amount paid" do
+        transaction = build_payment_tx(amount: 1500, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        result = real_gateway.settle!("x-bsv-payment", payload, request, route)
+
+        expect(result.receipt_headers["x-bsv-payment-satoshis-paid"]).to eq("1500")
+      end
+    end
+
+    # §6.4 step 1: "Ensures the prefix is the same as previously advertised
+    #               (and not used before)"
+    # §8.1: "each derivationPrefix can only be used once"
+    context "§8.1 — replay protection" do
+      it "rejects a replayed prefix" do
         transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
         payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
 
@@ -220,8 +255,9 @@ RSpec.describe X402::BSV::BRC105Gateway do
       end
     end
 
-    context "insufficient payment" do
-      it "rejects underpayment (402)" do
+    # §8.3: "The server should reject transactions that pay less than required."
+    context "§8.3 — underpayment" do
+      it "rejects payment below satoshisRequired" do
         transaction = build_payment_tx(amount: 999, script_hex: payment_script_hex)
         payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
 
@@ -230,8 +266,9 @@ RSpec.describe X402::BSV::BRC105Gateway do
       end
     end
 
-    context "wrong derivation suffix" do
-      it "rejects payment to wrong address (402)" do
+    # §6.4 step 2: "Ensuring the output script pays to the correct derivation"
+    context "§6.4 — wrong derivation" do
+      it "rejects payment to a different derived address" do
         wrong_suffix = SecureRandom.hex(16)
         wrong_pubkey = real_key_deriver.derive_public_key(
           [2, "3241645161d8"], "#{prefix} #{wrong_suffix}", "anyone", for_self: true
@@ -247,40 +284,45 @@ RSpec.describe X402::BSV::BRC105Gateway do
       end
     end
 
-    context "malformed JSON" do
-      it "raises VerificationError (400)" do
+    # §6.3: Payment JSON must contain derivationPrefix, derivationSuffix, transaction
+    context "§6.3 — malformed payment submission" do
+      it "rejects invalid JSON" do
         expect { real_gateway.settle!("x-bsv-payment", "not{json", request, route) }
           .to raise_error(X402::VerificationError, /invalid payment JSON/) { |e| expect(e.status).to eq(400) }
       end
-    end
 
-    context "missing derivationSuffix" do
-      it "raises VerificationError (400) for nil suffix" do
+      it "rejects missing derivationPrefix" do
+        payload = JSON.generate({ "derivationSuffix" => suffix, "transaction" => "AA==" })
+
+        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /missing derivationPrefix/) { |e| expect(e.status).to eq(400) }
+      end
+
+      it "rejects nil derivationSuffix" do
         payload = JSON.generate({ "derivationPrefix" => prefix, "transaction" => "AA==" })
 
         expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
           .to raise_error(X402::VerificationError, /missing derivationSuffix/) { |e| expect(e.status).to eq(400) }
       end
 
-      it "raises VerificationError (400) for empty suffix" do
+      it "rejects empty derivationSuffix" do
         payload = JSON.generate({ "derivationPrefix" => prefix, "derivationSuffix" => "", "transaction" => "AA==" })
 
         expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
           .to raise_error(X402::VerificationError, /invalid derivationSuffix format/) { |e| expect(e.status).to eq(400) }
       end
-    end
 
-    context "missing derivationPrefix" do
-      it "raises VerificationError (400)" do
-        payload = JSON.generate({ "derivationSuffix" => suffix, "transaction" => "AA==" })
+      it "rejects missing transaction" do
+        payload = JSON.generate({ "derivationPrefix" => prefix, "derivationSuffix" => suffix })
 
         expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-          .to raise_error(X402::VerificationError, /missing derivationPrefix/) { |e| expect(e.status).to eq(400) }
+          .to raise_error(X402::VerificationError, /missing transaction/) { |e| expect(e.status).to eq(400) }
       end
     end
 
-    context "ARC broadcast failure" do
-      it "raises VerificationError (502)" do
+    # ARC broadcast failure (infrastructure, not spec-defined)
+    context "broadcast failure" do
+      it "raises 502 when ARC is unreachable" do
         allow(arc_client).to receive(:broadcast).and_raise(StandardError, "network timeout")
         transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
         payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
@@ -290,16 +332,8 @@ RSpec.describe X402::BSV::BRC105Gateway do
       end
     end
 
-    context "missing transaction field" do
-      it "raises VerificationError (400)" do
-        payload = JSON.generate({ "derivationPrefix" => prefix, "derivationSuffix" => suffix })
-
-        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-          .to raise_error(X402::VerificationError, /missing transaction/) { |e| expect(e.status).to eq(400) }
-      end
-    end
-
-    context "BRC-103 mode (real counterparty key)" do
+    # §4: BRC-105 uses BRC-103 identity keys for counterparty derivation
+    context "§4 — BRC-103 authenticated session" do
       let(:client_key) { BSV::Primitives::PrivateKey.generate }
       let(:counterparty) { client_key.public_key.to_hex }
       let(:brc103_request) { mock_request("brc103.identity_key" => counterparty) }
@@ -314,7 +348,7 @@ RSpec.describe X402::BSV::BRC105Gateway do
         "76a914#{h160}88ac"
       end
 
-      it "settles with a real counterparty key" do
+      it "derives payment address using the counterparty identity key" do
         transaction = build_payment_tx(amount: 1000, script_hex: brc103_script_hex)
         payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
 

@@ -48,6 +48,7 @@ module X402
         end
 
         headers = {
+          "x-bsv-payment-version" => "1.0",
           "x-bsv-payment-satoshis-required" => route.resolve_amount_sats.to_s,
           "x-bsv-payment-derivation-prefix" => prefix
         }
@@ -80,10 +81,10 @@ module X402
         validate_prefix_and_suffix!(prefix, suffix)
         subject_tx = parse_beef_transaction(payment["transaction"])
         expected_script = derive_payment_script(prefix, suffix, rack_request)
-        verify_payment_output!(subject_tx, required_sats, expected_script)
+        paid_sats = verify_payment_output!(subject_tx, required_sats, expected_script)
         consume_prefix!(prefix)
         broadcast!(subject_tx)
-        build_settlement_result(subject_tx)
+        build_settlement_result(subject_tx, paid_sats)
       end
 
       private
@@ -150,14 +151,17 @@ module X402
       end
 
       def verify_payment_output!(transaction, required_sats, expected_script)
-        found = transaction.outputs.any? do |output|
+        matching = transaction.outputs.find do |output|
           output.locking_script == expected_script && output.satoshis >= required_sats
         end
-        return if found
 
-        raise VerificationError.new(
-          "no output pays >= #{required_sats} sats to derived address", status: 402
-        )
+        unless matching
+          raise VerificationError.new(
+            "no output pays >= #{required_sats} sats to derived address", status: 402
+          )
+        end
+
+        matching.satoshis
       end
 
       def broadcast!(transaction)
@@ -166,14 +170,22 @@ module X402
         raise VerificationError.new("ARC broadcast failed", status: 502)
       end
 
-      def build_settlement_result(transaction)
+      # NOTE: x-bsv-payment-satoshis-paid reflects the amount claimed in the
+      # BEEF transaction, verified against the derived payment script but set
+      # before ARC broadcast confirmation. It is not an on-chain-confirmed
+      # value. Downstream consumers requiring confirmed amounts should use
+      # the txid to query chain state independently.
+      def build_settlement_result(transaction, paid_sats)
         receipt = {
           "success" => true,
           "transaction" => transaction.txid_hex,
           "network" => NETWORK
         }
         SettlementResult.new(
-          receipt_headers: { "x-bsv-payment-result" => Base64.strict_encode64(JSON.generate(receipt)) },
+          receipt_headers: {
+            "x-bsv-payment-satoshis-paid" => paid_sats.to_s,
+            "x-bsv-payment-result" => Base64.strict_encode64(JSON.generate(receipt))
+          },
           txid: transaction.txid_hex,
           network: NETWORK
         )
