@@ -29,12 +29,17 @@ RSpec.describe X402::BSV::BRC105Gateway do
       let(:request) { mock_request }
       let(:headers) { gateway.challenge_headers(request, route) }
 
-      it "returns all three x-bsv-payment headers" do
+      it "returns all four x-bsv-payment headers" do
         expect(headers).to include(
+          "x-bsv-payment-version",
           "x-bsv-payment-satoshis-required",
           "x-bsv-payment-derivation-prefix",
           "x-bsv-payment-identity-key"
         )
+      end
+
+      it "sets version to 1.0" do
+        expect(headers["x-bsv-payment-version"]).to eq("1.0")
       end
 
       it "sets satoshis-required to the route amount" do
@@ -71,8 +76,9 @@ RSpec.describe X402::BSV::BRC105Gateway do
       let(:request) { mock_request("brc103.identity_key" => "02#{"cd" * 32}") }
       let(:headers) { gateway.challenge_headers(request, route) }
 
-      it "returns two headers (no identity key)" do
+      it "returns three headers (no identity key)" do
         expect(headers.keys).to contain_exactly(
+          "x-bsv-payment-version",
           "x-bsv-payment-satoshis-required",
           "x-bsv-payment-derivation-prefix"
         )
@@ -196,6 +202,15 @@ RSpec.describe X402::BSV::BRC105Gateway do
         expect(result.txid).to eq(transaction.txid_hex)
         expect(result.network).to eq("bsv:mainnet")
         expect(result.receipt_headers).to have_key("x-bsv-payment-result")
+      end
+
+      it "includes x-bsv-payment-satoshis-paid in receipt headers" do
+        transaction = build_payment_tx(amount: 1500, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        result = real_gateway.settle!("x-bsv-payment", payload, request, route)
+
+        expect(result.receipt_headers["x-bsv-payment-satoshis-paid"]).to eq("1500")
       end
 
       it "broadcasts via ARC" do
