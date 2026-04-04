@@ -44,15 +44,29 @@ module X402
         @txid_store = txid_store
       end
 
+      # Build a 402 challenge with Coinbase v2 +Payment-Required+ header.
+      #
+      # @param rack_request [Rack::Request]
+      # @param route [X402::Configuration::Route]
+      # @return [Hash] challenge headers
       def challenge_headers(rack_request, route)
         challenge = build_challenge(rack_request, route)
         { "Payment-Required" => Base64.strict_encode64(JSON.generate(challenge)) }
       end
 
+      # @return [Array<String>] proof header names this gateway responds to
       def proof_header_names
         ["Payment-Signature"]
       end
 
+      # Verify and broadcast a Coinbase v2 payment.
+      #
+      # @param _header_name [String] which proof header matched
+      # @param proof_payload [String] base64-encoded payment payload
+      # @param rack_request [Rack::Request]
+      # @param route [X402::Configuration::Route]
+      # @return [SettlementResult]
+      # @raise [VerificationError] on invalid payment, insufficient amount, or broadcast failure
       def settle!(_header_name, proof_payload, rack_request, route)
         required_sats = route.resolve_amount_sats
         payload = decode_payment_payload(proof_payload)

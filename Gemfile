@@ -16,3 +16,6 @@ gem "rubocop", "~> 1.86"
 
 gem "rackup", require: false
 gem "webrick", require: false
+
+gem "yard", require: false
+gem "yard-markdown", require: false

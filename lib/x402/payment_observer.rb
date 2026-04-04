@@ -55,6 +55,8 @@ module X402
       @on_payment = on_payment
     end
 
+    # @param env [Hash] Rack environment
+    # @return [Array(Integer, Hash, Array)] Rack response triple (always passes through)
     def call(env)
       observe_payment(env)
       @app.call(env)
@@ -129,8 +131,11 @@ module X402
 
     # Built-in extractor for the Coinbase v2 envelope format.
     # Decodes +Base64(JSON({ payload: { rawtx: "hex" } }))+.
-    # Returns a +BSV::Transaction::Transaction+ or +nil+.
+    #
+    # @see PaymentObserver extractor: parameter
     class CoinbaseV2Extractor
+      # @param proof_payload [String] raw proof header value
+      # @return [BSV::Transaction::Transaction, nil] parsed transaction or nil on failure
       def call(proof_payload)
         json = Base64.strict_decode64(proof_payload)
         payload = JSON.parse(json)
@@ -146,11 +151,16 @@ module X402
 
     # Built-in recogniser for a single static payee address.
     # Used when +payee_locking_script_hex+ is provided without a custom recogniser.
+    #
+    # @see PaymentObserver recogniser: parameter
     class StaticRecogniser
+      # @param payee_locking_script_hex [String] hex-encoded locking script to match
       def initialize(payee_locking_script_hex)
         @payee_hex = ::BSV::Script::Script.from_hex(payee_locking_script_hex).to_hex
       end
 
+      # @param locking_script_hex [String] hex-encoded locking script to test
+      # @return [Boolean] true if the script matches the configured payee
       def ours?(locking_script_hex)
         locking_script_hex == @payee_hex
       end

@@ -41,6 +41,8 @@ module X402
 
         # Record a prefix as issued.
         #
+        # @param prefix [String] hex derivation prefix
+        # @return [void]
         # @raise [StoreFullError] if max_issued unconsumed prefixes are held
         def store!(prefix)
           @monitor.synchronize do
@@ -53,6 +55,9 @@ module X402
         end
 
         # Non-binding read: returns true if the prefix was issued and not yet consumed.
+        #
+        # @param prefix [String] hex derivation prefix
+        # @return [Boolean]
         def valid?(prefix)
           @monitor.synchronize do
             entry = @prefixes[prefix]
@@ -62,6 +67,9 @@ module X402
 
         # Atomically mark a prefix as consumed. Returns false if already consumed,
         # unknown, or expired.
+        #
+        # @param prefix [String] hex derivation prefix
+        # @return [Boolean] true if successfully consumed, false if replay/unknown/expired
         def consume!(prefix)
           @monitor.synchronize do
             entry = @prefixes[prefix]

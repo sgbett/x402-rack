@@ -35,6 +35,12 @@ module X402
         @arc_client = arc_client
       end
 
+      # Build a 402 challenge with merkleworks +X402-Challenge+ header.
+      #
+      # @param rack_request [Rack::Request]
+      # @param route [X402::Configuration::Route]
+      # @return [Hash] challenge headers
+      # @raise [ConfigurationError] if route uses callable amount_sats (fiat pricing)
       def challenge_headers(rack_request, route)
         if route.amount_sats.respond_to?(:call)
           raise ConfigurationError,
@@ -44,10 +50,19 @@ module X402
         { "X402-Challenge" => challenge.to_header }
       end
 
+      # @return [Array<String>] proof header names this gateway responds to
       def proof_header_names
         ["X402-Proof"]
       end
 
+      # Verify a merkleworks x402 proof against the challenge and check mempool.
+      #
+      # @param _header_name [String] which proof header matched
+      # @param proof_payload [String] base64url-encoded proof
+      # @param rack_request [Rack::Request]
+      # @param route [X402::Configuration::Route]
+      # @return [SettlementResult]
+      # @raise [VerificationError] on invalid proof, binding mismatch, or mempool failure
       def settle!(_header_name, proof_payload, rack_request, route)
         required_sats = route.resolve_amount_sats
         proof = Proof.from_header(proof_payload)
