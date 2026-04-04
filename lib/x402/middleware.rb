@@ -4,11 +4,30 @@ require "rack"
 require "json"
 
 module X402
+  # Pure Rack dispatcher for payment-gated HTTP.
+  #
+  # The middleware has no blockchain knowledge — it matches routes, issues
+  # payment challenges by polling configured gateways, and dispatches proofs
+  # to the matching gateway for settlement.
+  #
+  # @example config.ru
+  #   X402.configure do |config|
+  #     config.domain = "api.example.com"
+  #     config.server_wif = ENV["SERVER_WIF"]
+  #     config.arc_url = "https://arc.taal.com"
+  #     config.enable :pay_gateway
+  #     config.protect method: :GET, path: "/api/expensive", amount_sats: 100
+  #   end
+  #
+  #   use X402::Middleware
   class Middleware
+    # @param app [#call] next Rack app in the middleware stack
     def initialize(app)
       @app = app
     end
 
+    # @param env [Hash] Rack environment
+    # @return [Array(Integer, Hash, Array)] Rack response triple
     def call(env)
       request = Rack::Request.new(env)
       config = X402.configuration

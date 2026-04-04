@@ -45,6 +45,10 @@ module X402
       @queue.push(tx_binary)
     end
 
+    # Drain the queue and stop the background thread.
+    # Safe to call when no thread has started (no-op).
+    #
+    # @return [void]
     def stop
       thread_to_join = nil
       @mutex.synchronize do

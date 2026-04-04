@@ -1,6 +1,16 @@
 # frozen_string_literal: true
 
 module X402
+  # DSL for configuring X402 middleware, gateways, and protected routes.
+  #
+  # @example Minimal configuration
+  #   X402.configure do |config|
+  #     config.domain = "api.example.com"
+  #     config.server_wif = ENV["SERVER_WIF"]
+  #     config.arc_url = "https://arc.taal.com"
+  #     config.enable :pay_gateway
+  #     config.protect method: :GET, path: "/api/expensive", amount_sats: 100
+  #   end
   class Configuration
     # Route holds a raw +amount_sats+ that may be an Integer or a callable.
     # The +resolve_amount_sats+ method evaluates callables at access time,
@@ -114,6 +124,13 @@ module X402
       end
     end
 
+    # Validate the configuration and construct gateways from specs.
+    #
+    # Called automatically at the end of +X402.configure+. Builds gateways
+    # from +enable+ specs, validates all constraints, and emits operational
+    # warnings for development defaults.
+    #
+    # @raise [ConfigurationError] if required fields are missing or invalid
     def validate!
       raise ConfigurationError, "domain is required" if domain.nil? || domain.empty?
 
