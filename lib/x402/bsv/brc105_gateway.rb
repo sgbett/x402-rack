@@ -24,6 +24,7 @@ module X402
       NETWORK = "bsv:mainnet"
       COMPRESSED_PUBKEY_HEX = /\A0[23][0-9a-fA-F]{64}\z/
       MAX_DERIVATION_BYTES = 64
+      PRINTABLE_ASCII = /\A[\x20-\x7E]+\z/
 
       # @param key_deriver [BSV::Wallet::KeyDeriver] provides identity key + BRC-42 derivation
       # @param prefix_store [#store!, #valid?, #consume!] replay protection for derivation prefixes
@@ -96,14 +97,26 @@ module X402
       end
 
       def validate_prefix_and_suffix!(prefix, suffix)
-        validate_derivation_component!("derivationPrefix", prefix)
-        validate_derivation_component!("derivationSuffix", suffix)
+        validate_hex!("derivationPrefix", prefix)
+        validate_suffix!("derivationSuffix", suffix)
       end
 
-      def validate_derivation_component!(name, value)
+      # Prefix is server-generated hex (SecureRandom.hex).
+      def validate_hex!(name, value)
         raise VerificationError.new("missing #{name}", status: 400) if value.nil?
         unless value.is_a?(String) && !value.empty? &&
                value.bytesize <= MAX_DERIVATION_BYTES && value.match?(/\A[0-9a-f]+\z/)
+          raise VerificationError.new("invalid #{name} format", status: 400)
+        end
+      end
+
+      # Suffix is client-generated — the BRC-105 spec does not constrain the
+      # format. Reference implementations (BRC-121, bsv-x402) use base64.
+      # We accept any printable ASCII string within the size limit.
+      def validate_suffix!(name, value)
+        raise VerificationError.new("missing #{name}", status: 400) if value.nil?
+        unless value.is_a?(String) && !value.empty? &&
+               value.bytesize <= MAX_DERIVATION_BYTES && value.match?(PRINTABLE_ASCII)
           raise VerificationError.new("invalid #{name} format", status: 400)
         end
       end
