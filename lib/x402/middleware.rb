@@ -36,15 +36,21 @@ module X402
       # Unprotected route — pass through
       return @app.call(env) unless route
 
+      log = config.logger
+      log.info "[x402] #{request.request_method} #{request.path_info} " \
+               "— protected route, #{route.resolve_amount_sats} sats"
+
       # BRC-104 §6.2: extract client identity key from x-bsv-auth-identity-key
-      extract_brc103_identity_key!(env)
+      extract_brc103_identity_key!(env, log)
 
       # Check for a proof/payment header from any gateway
       gateway, header_name, proof_payload = detect_proof(env, config)
 
       if gateway
-        settle_and_forward(env, gateway, header_name, proof_payload, request, route)
+        log.info "[x402] Proof header #{header_name} detected — dispatching to #{gateway.class.name}"
+        settle_and_forward(env, gateway, header_name, proof_payload, request, route, log)
       else
+        log.info "[x402] No proof header — issuing 402 challenge"
         issue_challenge(request, route, config)
       end
     end
@@ -85,8 +91,10 @@ module X402
       [402, headers, [body]]
     end
 
-    def settle_and_forward(env, gateway, header_name, proof_payload, request, route)
+    def settle_and_forward(env, gateway, header_name, proof_payload, request, route, log)
       result = gateway.settle!(header_name, proof_payload, request, route)
+
+      log.info "[x402] Settlement OK — txid=#{result.txid}"
 
       status, headers, body = @app.call(env)
 
@@ -99,10 +107,13 @@ module X402
 
       [status, headers, body]
     rescue X402::VerificationError => e
+      log.warn "[x402] Settlement failed: #{e.status} #{e.reason}"
       error_response(e.status, e.reason)
     rescue X402::Error => e
+      log.warn "[x402] Error: #{e.message}"
       error_response(400, e.message)
-    rescue StandardError
+    rescue StandardError => e
+      log.error "[x402] Unexpected error: #{e.class}: #{e.message}"
       error_response(500, "internal error")
     end
 
@@ -122,11 +133,16 @@ module X402
     #
     # Does not overwrite an identity key already set by upstream middleware
     # (e.g. a BRC-103/104 auth layer that has verified the signature).
-    def extract_brc103_identity_key!(env)
+    def extract_brc103_identity_key!(env, log)
       return if env["brc103.identity_key"].is_a?(String) && !env["brc103.identity_key"].empty?
 
       key = env["HTTP_X_BSV_AUTH_IDENTITY_KEY"]
-      env["brc103.identity_key"] = key.downcase if key && !key.empty?
+      if key && !key.empty?
+        log.info "[x402] Client identity key: #{key[0..15]}..."
+        env["brc103.identity_key"] = key.downcase
+      else
+        log.debug "[x402] No x-bsv-auth-identity-key header"
+      end
     end
 
     def rack_header_key(http_header_name)
