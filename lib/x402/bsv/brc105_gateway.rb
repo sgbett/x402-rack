@@ -78,13 +78,14 @@ module X402
       # @param route [X402::Configuration::Route]
       # @return [SettlementResult]
       def settle!(_header_name, proof_payload, rack_request, route)
+        # §7.1: fail fast if unauthenticated — before parsing untrusted payload
+        counterparty = resolve_counterparty(rack_request)
         required_sats = route.resolve_amount_sats
         payment = parse_payment(proof_payload)
         prefix = payment["derivationPrefix"]
         suffix = payment["derivationSuffix"]
         validate_prefix_and_suffix!(prefix, suffix)
         subject_tx = parse_beef_transaction(payment["transaction"])
-        counterparty = resolve_counterparty(rack_request)
         log_derivation_inputs(prefix, suffix, counterparty)
         expected_script = derive_payment_script(prefix, suffix, rack_request)
         log_expected_script(expected_script)
@@ -163,12 +164,19 @@ module X402
       # BRC-105 §7.1: "If not authenticated, respond 401 Unauthorized."
       # The client's identity key is required for BRC-42 key derivation.
       def resolve_counterparty(rack_request)
-        validated_brc103_key(rack_request) ||
-          raise(VerificationError.new("missing client identity key (x-bsv-auth-identity-key)", status: 401))
+        key = rack_request.env["brc103.identity_key"]
+        return key if key.is_a?(String) && key.match?(COMPRESSED_PUBKEY_HEX)
+
+        if key.nil? || (key.is_a?(String) && key.empty?)
+          raise VerificationError.new("missing client identity key (x-bsv-auth-identity-key)", status: 401)
+        end
+
+        raise VerificationError.new("invalid client identity key (x-bsv-auth-identity-key)", status: 401)
       end
 
       # Returns the validated BRC-103 identity key from the Rack env, or nil
       # if absent or not a valid compressed public key hex.
+      # Used by challenge_headers to check for BRC-103 presence.
       def validated_brc103_key(rack_request)
         key = rack_request.env["brc103.identity_key"]
         key if key.is_a?(String) && key.match?(COMPRESSED_PUBKEY_HEX)

@@ -119,7 +119,12 @@ module X402
     # NOTE: This is the CLAIMED identity key — not authenticated. BRC-103
     # signature verification must occur in a separate middleware if identity
     # assertions are required for authorisation decisions.
+    #
+    # Does not overwrite an identity key already set by upstream middleware
+    # (e.g. a BRC-103/104 auth layer that has verified the signature).
     def extract_brc103_identity_key!(env)
+      return if env["brc103.identity_key"].is_a?(String) && !env["brc103.identity_key"].empty?
+
       key = env["HTTP_X_BSV_AUTH_IDENTITY_KEY"]
       env["brc103.identity_key"] = key.downcase if key && !key.empty?
     end
