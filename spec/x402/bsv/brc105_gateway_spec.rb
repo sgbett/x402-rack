@@ -143,14 +143,16 @@ RSpec.describe X402::BSV::BRC105Gateway do
       described_class.new(key_deriver: real_key_deriver, prefix_store: prefix_store, arc_client: arc_client)
     end
 
+    let(:client_key) { BSV::Primitives::PrivateKey.generate }
+    let(:client_identity_key) { client_key.public_key.to_hex }
     let(:prefix) { SecureRandom.hex(16) }
     let(:suffix) { SecureRandom.hex(16) }
-    let(:request) { mock_request }
+    let(:request) { mock_request("brc103.identity_key" => client_identity_key) }
 
     # Derive the expected payment script (same logic as the gateway)
     let(:derived_pubkey) do
       real_key_deriver.derive_public_key(
-        [2, "3241645161d8"], "#{prefix} #{suffix}", "anyone", for_self: true
+        [2, "3241645161d8"], "#{prefix} #{suffix}", client_identity_key, for_self: true
       )
     end
     let(:payment_script_hex) do
@@ -325,7 +327,7 @@ RSpec.describe X402::BSV::BRC105Gateway do
       it "accepts base64 derivationSuffix" do
         b64_suffix = Base64.strict_encode64(SecureRandom.random_bytes(16))
         b64_derived = real_key_deriver.derive_public_key(
-          [2, "3241645161d8"], "#{prefix} #{b64_suffix}", "anyone", for_self: true
+          [2, "3241645161d8"], "#{prefix} #{b64_suffix}", client_identity_key, for_self: true
         )
         h160 = b64_derived.hash160.unpack1("H*")
         b64_script = "76a914#{h160}88ac"
@@ -357,30 +359,16 @@ RSpec.describe X402::BSV::BRC105Gateway do
       end
     end
 
-    # §4: BRC-105 uses BRC-103 identity keys for counterparty derivation
-    context "§4 — BRC-103 authenticated session" do
-      let(:client_key) { BSV::Primitives::PrivateKey.generate }
-      let(:counterparty) { client_key.public_key.to_hex }
-      let(:brc103_request) { mock_request("brc103.identity_key" => counterparty) }
+    # §7.1: "If not authenticated, respond 401 Unauthorized."
+    context "§7.1 — missing client identity key" do
+      let(:unauthenticated_request) { mock_request }
 
-      let(:brc103_derived_pubkey) do
-        real_key_deriver.derive_public_key(
-          [2, "3241645161d8"], "#{prefix} #{suffix}", counterparty, for_self: true
-        )
-      end
-      let(:brc103_script_hex) do
-        h160 = brc103_derived_pubkey.hash160.unpack1("H*")
-        "76a914#{h160}88ac"
-      end
-
-      it "derives payment address using the counterparty identity key" do
-        transaction = build_payment_tx(amount: 1000, script_hex: brc103_script_hex)
+      it "rejects settlement without x-bsv-auth-identity-key" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
         payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
 
-        result = real_gateway.settle!("x-bsv-payment", payload, brc103_request, route)
-
-        expect(result).to be_a(X402::SettlementResult)
-        expect(result.txid).to eq(transaction.txid_hex)
+        expect { real_gateway.settle!("x-bsv-payment", payload, unauthenticated_request, route) }
+          .to raise_error(X402::VerificationError, /missing client identity key/) { |e| expect(e.status).to eq(401) }
       end
     end
   end

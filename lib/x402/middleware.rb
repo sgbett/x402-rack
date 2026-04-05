@@ -36,6 +36,9 @@ module X402
       # Unprotected route — pass through
       return @app.call(env) unless route
 
+      # BRC-104 §6.2: extract client identity key from x-bsv-auth-identity-key
+      extract_brc103_identity_key!(env)
+
       # Check for a proof/payment header from any gateway
       gateway, header_name, proof_payload = detect_proof(env, config)
 
@@ -106,6 +109,24 @@ module X402
     def error_response(status, reason)
       body = JSON.generate({ error: reason })
       [status, { "content-type" => "application/json" }, [body]]
+    end
+
+    # BRC-104 §6.2: x-bsv-auth-identity-key carries the client's public
+    # identity key (33-byte compressed secp256k1 pubkey, hex). Populate
+    # brc103.identity_key in the Rack env so gateways can use it as the
+    # counterparty in BRC-42 key derivation.
+    #
+    # NOTE: This is the CLAIMED identity key — not authenticated. BRC-103
+    # signature verification must occur in a separate middleware if identity
+    # assertions are required for authorisation decisions.
+    #
+    # Does not overwrite an identity key already set by upstream middleware
+    # (e.g. a BRC-103/104 auth layer that has verified the signature).
+    def extract_brc103_identity_key!(env)
+      return if env["brc103.identity_key"].is_a?(String) && !env["brc103.identity_key"].empty?
+
+      key = env["HTTP_X_BSV_AUTH_IDENTITY_KEY"]
+      env["brc103.identity_key"] = key.downcase if key && !key.empty?
     end
 
     def rack_header_key(http_header_name)
