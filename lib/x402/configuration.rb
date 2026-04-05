@@ -47,14 +47,27 @@ module X402
 
     attr_accessor :domain, :payee_locking_script_hex, :gateways,
                   :arc_url, :arc_api_key, :arc_client, :server_wif,
-                  :exchange_rate_provider
+                  :exchange_rate_provider, :logger
     attr_reader :routes, :gateway_specs
 
     def initialize
       @routes = []
       @gateways = []
       @gateway_specs = []
+      @logger = default_logger
     end
+
+    private
+
+    def default_logger
+      require "logger"
+      logger = ::Logger.new($stderr)
+      logger.formatter = proc { |_sev, _time, _prog, msg| "#{msg}\n" }
+      logger.level = ::Logger::DEBUG
+      logger
+    end
+
+    public
 
     # Record a gateway to be constructed later during +validate!+.
     #
@@ -157,9 +170,9 @@ module X402
       end
       return unless needs_warning
 
-      warn "[x402] challenge_secret is auto-generated. " \
-           "In-flight challenges will fail after process restart. " \
-           "Set challenge_secret: explicitly for production."
+      logger.warn "[x402] challenge_secret is auto-generated. " \
+                  "In-flight challenges will fail after process restart. " \
+                  "Set challenge_secret: explicitly for production."
     end
 
     def warn_in_memory_prefix_store!
@@ -168,9 +181,9 @@ module X402
       end
       return unless needs_warning
 
-      warn "[x402] BRC105Gateway using in-memory PrefixStore. " \
-           "No replay protection across processes. " \
-           "Use a shared backend (Redis) for multi-process deployments."
+      logger.warn "[x402] BRC105Gateway using in-memory PrefixStore. " \
+                  "No replay protection across processes. " \
+                  "Use a shared backend (Redis) for multi-process deployments."
     end
 
     def validate_gateways!

@@ -209,29 +209,33 @@ module X402
       # the txid to query chain state independently.
       # --- Settlement logging (tagged [brc105]) ---
 
+      def logger
+        X402.configuration.logger
+      end
+
       def log_derivation_inputs(prefix, suffix, counterparty)
-        warn "[brc105] Derivation: prefix=#{prefix} suffix=#{suffix} counterparty=#{counterparty}"
-        warn "[brc105] Key ID: #{prefix} #{suffix}"
+        logger.info "[brc105] Derivation: prefix=#{prefix} suffix=#{suffix} counterparty=#{counterparty}"
+        logger.debug "[brc105] Key ID: #{prefix} #{suffix}"
       end
 
       def log_expected_script(script)
-        warn "[brc105] Expected locking script: #{script.to_hex}"
+        logger.info "[brc105] Expected locking script: #{script.to_hex}"
       end
 
       def log_tx_outputs(transaction, required_sats, expected_script)
-        warn "[brc105] Verifying #{transaction.outputs.length} output(s) against #{required_sats} sats required"
+        logger.info "[brc105] Verifying #{transaction.outputs.length} output(s) against #{required_sats} sats required"
         transaction.outputs.each_with_index do |output, i|
           script_match = output.locking_script == expected_script
           sats_match = output.satoshis >= required_sats
-          warn "[brc105]   output[#{i}]: #{output.satoshis} sats, " \
-               "script=#{output.locking_script.to_hex[0..15]}... " \
-               "script_match=#{script_match} sats_match=#{sats_match}"
+          logger.info "[brc105]   output[#{i}]: #{output.satoshis} sats, " \
+                      "script=#{output.locking_script.to_hex[0..15]}... " \
+                      "script_match=#{script_match} sats_match=#{sats_match}"
         end
       end
 
       def log_settlement_success(transaction, paid_sats, required_sats)
-        warn "[brc105] Settlement OK: txid=#{transaction.txid_hex} " \
-             "paid=#{paid_sats} required=#{required_sats}"
+        logger.info "[brc105] Settlement OK: txid=#{transaction.txid_hex} " \
+                    "paid=#{paid_sats} required=#{required_sats}"
       end
 
       def build_settlement_result(transaction, paid_sats)
