@@ -81,10 +81,15 @@ module X402
         suffix = payment["derivationSuffix"]
         validate_prefix_and_suffix!(prefix, suffix)
         subject_tx = parse_beef_transaction(payment["transaction"])
+        counterparty = resolve_counterparty(rack_request)
+        log_derivation_inputs(prefix, suffix, counterparty)
         expected_script = derive_payment_script(prefix, suffix, rack_request)
+        log_expected_script(expected_script)
+        log_tx_outputs(subject_tx, required_sats, expected_script)
         paid_sats = verify_payment_output!(subject_tx, required_sats, expected_script)
         consume_prefix!(prefix)
         broadcast!(subject_tx)
+        log_settlement_success(subject_tx, paid_sats, required_sats)
         build_settlement_result(subject_tx, paid_sats)
       end
 
@@ -188,6 +193,33 @@ module X402
       # before ARC broadcast confirmation. It is not an on-chain-confirmed
       # value. Downstream consumers requiring confirmed amounts should use
       # the txid to query chain state independently.
+      # --- Settlement logging (tagged [brc105]) ---
+
+      def log_derivation_inputs(prefix, suffix, counterparty)
+        warn "[brc105] Derivation: prefix=#{prefix} suffix=#{suffix} counterparty=#{counterparty}"
+        warn "[brc105] Key ID: #{prefix} #{suffix}"
+      end
+
+      def log_expected_script(script)
+        warn "[brc105] Expected locking script: #{script.to_hex}"
+      end
+
+      def log_tx_outputs(transaction, required_sats, expected_script)
+        warn "[brc105] Verifying #{transaction.outputs.length} output(s) against #{required_sats} sats required"
+        transaction.outputs.each_with_index do |output, i|
+          script_match = output.locking_script == expected_script
+          sats_match = output.satoshis >= required_sats
+          warn "[brc105]   output[#{i}]: #{output.satoshis} sats, " \
+               "script=#{output.locking_script.to_hex[0..15]}... " \
+               "script_match=#{script_match} sats_match=#{sats_match}"
+        end
+      end
+
+      def log_settlement_success(transaction, paid_sats, required_sats)
+        warn "[brc105] Settlement OK: txid=#{transaction.txid_hex} " \
+             "paid=#{paid_sats} required=#{required_sats}"
+      end
+
       def build_settlement_result(transaction, paid_sats)
         receipt = {
           "success" => true,
