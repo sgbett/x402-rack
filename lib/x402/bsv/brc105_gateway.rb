@@ -22,7 +22,7 @@ module X402
       PROTOCOL_ID = [2, "3241645161d8"].freeze
       PROOF_HEADER = "x-bsv-payment"
       NETWORK = "bsv:mainnet"
-      COMPRESSED_PUBKEY_HEX = /\A0[23][0-9a-fA-F]{64}\z/
+      COMPRESSED_PUBKEY_HEX = /\A0[23][0-9a-f]{64}\z/
       MAX_DERIVATION_BYTES = 64
       PRINTABLE_ASCII = /\A[\x20-\x7E]+\z/
 
@@ -54,7 +54,10 @@ module X402
           "x-bsv-payment-derivation-prefix" => prefix
         }
 
-        # Include identity key only in standalone mode (no BRC-103 present)
+        # The 402 challenge is issued before the client authenticates (no
+        # x-bsv-auth-identity-key yet). Include the server's identity key so
+        # the client knows who to derive the payment address for. When BRC-103
+        # mutual auth is already established, the client already has this key.
         headers["x-bsv-payment-identity-key"] = @key_deriver.identity_key unless validated_brc103_key(rack_request)
 
         headers

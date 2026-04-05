@@ -115,9 +115,13 @@ module X402
     # identity key (33-byte compressed secp256k1 pubkey, hex). Populate
     # brc103.identity_key in the Rack env so gateways can use it as the
     # counterparty in BRC-42 key derivation.
+    #
+    # NOTE: This is the CLAIMED identity key — not authenticated. BRC-103
+    # signature verification must occur in a separate middleware if identity
+    # assertions are required for authorisation decisions.
     def extract_brc103_identity_key!(env)
       key = env["HTTP_X_BSV_AUTH_IDENTITY_KEY"]
-      env["brc103.identity_key"] = key if key && !key.empty?
+      env["brc103.identity_key"] = key.downcase if key && !key.empty?
     end
 
     def rack_header_key(http_header_name)
