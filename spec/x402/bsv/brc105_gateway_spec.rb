@@ -312,6 +312,31 @@ RSpec.describe X402::BSV::BRC105Gateway do
           .to raise_error(X402::VerificationError, /invalid derivationSuffix format/) { |e| expect(e.status).to eq(400) }
       end
 
+      it "rejects non-hex derivationPrefix" do
+        payload = JSON.generate(
+          "derivationPrefix" => "SGVsbG8=", "derivationSuffix" => suffix, "transaction" => "AA=="
+        )
+
+        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /invalid derivationPrefix format/) { |e| expect(e.status).to eq(400) }
+      end
+
+      # BRC-105/BRC-121: suffix is client-generated, reference impls use base64
+      it "accepts base64 derivationSuffix" do
+        b64_suffix = Base64.strict_encode64(SecureRandom.random_bytes(16))
+        b64_derived = real_key_deriver.derive_public_key(
+          [2, "3241645161d8"], "#{prefix} #{b64_suffix}", "anyone", for_self: true
+        )
+        h160 = b64_derived.hash160.unpack1("H*")
+        b64_script = "76a914#{h160}88ac"
+
+        transaction = build_payment_tx(amount: 1000, script_hex: b64_script)
+        payload = build_proof_payload(prefix: prefix, suffix: b64_suffix, transaction: transaction)
+
+        result = real_gateway.settle!("x-bsv-payment", payload, request, route)
+        expect(result).to be_a(X402::SettlementResult)
+      end
+
       it "rejects missing transaction" do
         payload = JSON.generate({ "derivationPrefix" => prefix, "derivationSuffix" => suffix })
 
