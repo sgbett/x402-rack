@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-04-05
+
+### Added
+
+- **Configurable structured logging** — pluggable `logger` on configuration with structured request lifecycle messages (route match, identity key, proof dispatch, settlement outcome). (#102)
+- **BRC-105 settlement logging** — structured log output for derivation, key ID, locking script verification, and settlement result in `BRC105Gateway`. (#96)
+- **BRC-105 §6.2 response body** — settlement success and error responses now include spec-conformant JSON body with receipt details. Spec-anchored tests. (#91)
+- **BRC-105 response headers** — `x-bsv-payment-version` and `x-bsv-payment-satoshis-paid` headers on successful settlement. (#91)
+- **API documentation** — YARD-style docs for public interfaces. (#89)
+
+### Changed
+
+- **Client identity key required for BRC-105** — `x-bsv-auth-identity-key` header is now mandatory for BRC-105 settlement (§7.1). Requests without it receive a 401 error. (#99)
+
+### Fixed
+
+- **ARC broadcast error details** — error messages from ARC are now logged and surfaced in the 502 response rather than swallowed silently.
+- **Base64 `derivationSuffix` accepted** — client-generated suffixes may be base64-encoded (not just hex). Validation updated to accept both formats. (#93)
+
+### Build
+
+- **Dependency updates** — bsv-sdk 0.6.0 → 0.6.1, rack 3.2.6.
+
 ## [0.5.1] - 2026-04-04
 
 ### Fixed
