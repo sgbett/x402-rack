@@ -157,8 +157,11 @@ module X402
         ::BSV::Script::Script.from_hex("76a914#{h160}88ac")
       end
 
+      # BRC-105 §7.1: "If not authenticated, respond 401 Unauthorized."
+      # The client's identity key is required for BRC-42 key derivation.
       def resolve_counterparty(rack_request)
-        validated_brc103_key(rack_request) || "anyone"
+        validated_brc103_key(rack_request) ||
+          raise(VerificationError.new("missing client identity key (x-bsv-auth-identity-key)", status: 401))
       end
 
       # Returns the validated BRC-103 identity key from the Rack env, or nil

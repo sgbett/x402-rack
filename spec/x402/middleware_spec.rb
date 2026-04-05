@@ -325,6 +325,35 @@ RSpec.describe X402::Middleware do
       proof_headers = [mock_gateway, pay_gateway, brc105_gateway].flat_map(&:proof_header_names)
       expect(proof_headers).to eq(proof_headers.uniq)
     end
+
+    # BRC-104 §6.2: x-bsv-auth-identity-key → brc103.identity_key
+    it "extracts x-bsv-auth-identity-key into brc103.identity_key" do
+      captured_env = nil
+      spy_gw = Object.new
+      spy_gw.define_singleton_method(:challenge_headers) { |_req, _route| {} }
+      spy_gw.define_singleton_method(:proof_header_names) { ["x-bsv-payment"] }
+      spy_gw.define_singleton_method(:settle!) do |_header_name, _proof, request, _route|
+        captured_env = request.env
+        X402::SettlementResult.new(txid: "aa" * 32)
+      end
+
+      X402.reset_configuration!
+      X402.configure do |c|
+        c.domain = "api.example.com"
+        c.payee_locking_script_hex = "76a914#{"aa" * 20}88ac"
+        c.gateways = [spy_gw]
+        c.protect(method: "GET", path: "/premium", amount_sats: 50)
+      end
+
+      client_pubkey = "02#{"cd" * 32}"
+      env = Rack::MockRequest.env_for("/premium", method: "GET")
+      env["HTTP_X_BSV_AUTH_IDENTITY_KEY"] = client_pubkey
+      env["HTTP_X_BSV_PAYMENT"] = '{"test":"data"}'
+
+      app.call(env)
+
+      expect(captured_env["brc103.identity_key"]).to eq(client_pubkey)
+    end
   end
 
   describe "boundary test" do
