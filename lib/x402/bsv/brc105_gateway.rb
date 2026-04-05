@@ -198,8 +198,9 @@ module X402
 
       def broadcast!(transaction)
         @arc_client.broadcast(transaction)
-      rescue StandardError
-        raise VerificationError.new("ARC broadcast failed", status: 502)
+      rescue StandardError => e
+        logger.error "[brc105] ARC broadcast error: #{e.class}: #{e.message}"
+        raise VerificationError.new("ARC broadcast failed: #{e.message}", status: 502)
       end
 
       # NOTE: x-bsv-payment-satoshis-paid reflects the amount claimed in the
