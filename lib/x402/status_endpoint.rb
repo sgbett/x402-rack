@@ -15,14 +15,18 @@ module X402
   #   X402.configure do |c|
   #     c.server_wif = ENV["SERVER_WIF"]
   #     c.enable_status_endpoint
+  #     # c.status_endpoint_token = ENV["X402_STATUS_TOKEN"] # explicit (recommended in prod)
   #     # c.status_endpoint_path  = "/_x402/status"          # default
-  #     # c.status_endpoint_token = ENV["X402_STATUS_TOKEN"] # optional
   #   end
   #
   # Auth model:
-  # - Default (no token): localhost-only (REMOTE_ADDR must be 127.0.0.1 or ::1)
-  # - Token set: localhost still allowed; non-localhost requires
-  #   +Authorization: Bearer <token>+
+  # - Bearer-token only. Every request requires
+  #   +Authorization: Bearer <token>+ — there is no localhost
+  #   bypass and no network-trust heuristic.
+  # - If +status_endpoint_token+ is unset, the configuration auto-generates
+  #   one at +validate!+ time and logs it once at startup so it can be
+  #   copied into a curl command. Production deployments should set the
+  #   token explicitly via an environment variable.
   #
   # Format selection: +?format=json+ or +Accept: application/json+ → JSON;
   # otherwise HTML.
@@ -31,7 +35,6 @@ module X402
   # Balance, UTXOs, ARC reachability and other live signals are deferred
   # to later phases — see issue #108.
   class StatusEndpoint
-    LOCALHOST_ADDRS = %w[127.0.0.1 ::1].freeze
     ADDRESS_NOTE = "Identity address — used for BRC-42 derivation. " \
                    "Not the per-payment receive address. Payments are " \
                    "settled to per-payment derived addresses."
@@ -58,11 +61,8 @@ module X402
     attr_reader :config
 
     def authorised?(env)
-      remote_addr = env["REMOTE_ADDR"].to_s
-      return true if LOCALHOST_ADDRS.include?(remote_addr)
-
       token = config.status_endpoint_token
-      return false if token.nil? || token.empty?
+      return false if token.nil? || token.to_s.empty?
 
       header = env["HTTP_AUTHORIZATION"].to_s
       return false unless header.start_with?("Bearer ")
