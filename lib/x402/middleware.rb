@@ -2,6 +2,7 @@
 
 require "rack"
 require "json"
+require_relative "status_endpoint"
 
 module X402
   # Pure Rack dispatcher for payment-gated HTTP.
@@ -31,6 +32,11 @@ module X402
     def call(env)
       request = Rack::Request.new(env)
       config = X402.configuration
+
+      if config.status_endpoint_enabled? && request.path_info == config.status_endpoint_path
+        return X402::StatusEndpoint.new(config).call(env)
+      end
+
       route = config.find_route(request.request_method, request.path_info)
 
       # Unprotected route — pass through

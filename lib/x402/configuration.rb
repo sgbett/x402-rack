@@ -47,14 +47,33 @@ module X402
 
     attr_accessor :domain, :payee_locking_script_hex, :gateways,
                   :arc_url, :arc_api_key, :arc_client, :server_wif,
-                  :exchange_rate_provider, :logger
+                  :exchange_rate_provider, :logger,
+                  :status_endpoint_path, :status_endpoint_token
     attr_reader :routes, :gateway_specs
+
+    DEFAULT_STATUS_ENDPOINT_PATH = "/_x402/status"
 
     def initialize
       @routes = []
       @gateways = []
       @gateway_specs = []
       @logger = default_logger
+      @status_endpoint_enabled = false
+      @status_endpoint_path = DEFAULT_STATUS_ENDPOINT_PATH
+      @status_endpoint_token = nil
+    end
+
+    # Opt in to the read-only status endpoint at +status_endpoint_path+
+    # (default +/_x402/status+). Disabled by default.
+    #
+    # @return [void]
+    def enable_status_endpoint
+      @status_endpoint_enabled = true
+    end
+
+    # @return [Boolean] whether the status endpoint should be served
+    def status_endpoint_enabled?
+      @status_endpoint_enabled
     end
 
     private
