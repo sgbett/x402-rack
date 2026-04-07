@@ -4,11 +4,15 @@ require "bundler/gem_tasks"
 require "rspec/core/rake_task"
 
 RSpec::Core::RakeTask.new(:spec) do |t|
-  t.exclude_pattern = "spec/e2e/**/*_spec.rb"
+  t.exclude_pattern = "spec/{e2e,features}/**/*_spec.rb"
 end
 
 RSpec::Core::RakeTask.new(:e2e) do |t|
   t.pattern = "spec/e2e/**/*_spec.rb"
+end
+
+RSpec::Core::RakeTask.new(:feature) do |t|
+  t.pattern = "spec/features/**/*_spec.rb"
 end
 
 require "rubocop/rake_task"
