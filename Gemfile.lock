@@ -13,8 +13,8 @@ GEM
   specs:
     ast (2.4.3)
     base64 (0.3.0)
-    bsv-sdk (0.6.1)
-    bsv-wallet (0.2.0)
+    bsv-sdk (0.7.0)
+    bsv-wallet (0.3.3)
       base64 (~> 0.2)
       bsv-sdk (~> 0.4)
     csv (3.3.5)
