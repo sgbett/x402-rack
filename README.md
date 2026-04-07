@@ -122,11 +122,28 @@ BSV-pay and BSV-proof produce partial transaction templates that clients extend.
 ## Development
 
 ```bash
-bin/setup              # Install dependencies
-bundle exec rake spec  # Run tests
-bundle exec rubocop    # Lint
-bundle exec rake       # Run all checks (tests + lint)
+bin/setup               # Install dependencies
+bundle exec rake spec   # Run unit and integration tests
+bundle exec rubocop     # Lint
+bundle exec rake        # Run all checks (tests + lint)
+bundle exec rake e2e    # Run BSV testnet e2e tests (requires ARC + funded wallets)
+bundle exec rake feature # Run browser feature tests (requires Chrome for Testing + bsv-x402 extension)
 ```
+
+### Feature specs (browser)
+
+Feature specs drive a real Chrome browser with the [bsv-x402](https://github.com/sgbett/bsv-x402) extension side-loaded. Google Chrome stable silently refuses `--load-extension`, so a separate automation build is required:
+
+```bash
+npx @puppeteer/browsers install chrome@stable \
+  --path=$HOME/.cache/chrome-for-testing
+npx @puppeteer/browsers install chromedriver@stable \
+  --path=$HOME/.cache/chrome-for-testing
+bundle install --with feature
+bundle exec rake feature
+```
+
+Set `BSV_X402_EXTENSION_PATH` to override the default extension location. Set `HEADED=1` to launch Chrome in headed mode for debugging.
 
 ## Contributing
 

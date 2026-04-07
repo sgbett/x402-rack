@@ -19,3 +19,8 @@ gem "webrick", require: false
 
 gem "yard", require: false
 gem "yard-markdown", require: false
+
+group :feature do
+  gem "capybara", "~> 3.40"
+  gem "selenium-webdriver", "~> 4.0"
+end
