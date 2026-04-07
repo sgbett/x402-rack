@@ -183,6 +183,8 @@ module X402
       raise ConfigurationError, "at least one route must be protected" if routes.empty?
     end
 
+    private
+
     # Resolve and announce the status endpoint token. Auto-generates a
     # random token if none was provided so the endpoint is always
     # authenticated. Logged at startup so developers can copy it into a
@@ -204,8 +206,6 @@ module X402
                   "http://localhost:PORT#{@status_endpoint_path}"
       logger.info "[x402]   set status_endpoint_token explicitly (e.g. from ENV) to suppress auto-generation"
     end
-
-    private
 
     def warn_operational_concerns!
       return if gateway_specs.empty? # gateways= was used directly — specs not relevant

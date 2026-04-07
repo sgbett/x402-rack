@@ -2,6 +2,7 @@
 
 require "json"
 require "rack"
+require "bsv-sdk"
 
 module X402
   # Read-only HTTP status endpoint for the x402-rack middleware.
@@ -65,15 +66,14 @@ module X402
       return false if token.nil? || token.to_s.empty?
 
       header = env["HTTP_AUTHORIZATION"].to_s
-      return false unless header.start_with?("Bearer ")
+      match = header.match(/\ABearer\s+(.+)\z/i)
+      return false unless match
 
-      presented = header.sub(/\ABearer\s+/, "")
-      Rack::Utils.secure_compare(token, presented)
+      Rack::Utils.secure_compare(token, match[1])
     end
 
     def json_requested?(env)
-      query = env["QUERY_STRING"].to_s
-      return true if query.split("&").include?("format=json")
+      return true if Rack::Request.new(env).params["format"] == "json"
 
       env["HTTP_ACCEPT"].to_s.include?("application/json")
     end
@@ -86,42 +86,59 @@ module X402
     end
 
     def identity_data
-      key = identity_private_key
-      if key
+      key, status = identity_private_key
+      case status
+      when :ok
         {
           public_key: key.public_key.to_hex,
           address: key.public_key.address,
           address_note: ADDRESS_NOTE
         }
-      else
+      when :missing
         {
           public_key: nil,
           address: nil,
           address_note: "server_wif is not configured — no identity available."
         }
+      when :invalid
+        {
+          public_key: nil,
+          address: nil,
+          address_note: "server_wif is set but failed to parse — check the configured value."
+        }
       end
     end
 
+    # @return [Array(BSV::Primitives::PrivateKey, Symbol)] tuple of
+    #   parsed key (or nil) and status: +:ok+, +:missing+, or +:invalid+
     def identity_private_key
       wif = config.server_wif
-      return if wif.nil? || wif.empty?
+      return [nil, :missing] if wif.nil? || wif.empty?
 
-      ::BSV::Primitives::PrivateKey.from_wif(wif)
-    rescue StandardError
-      nil
+      [::BSV::Primitives::PrivateKey.from_wif(wif), :ok]
+    rescue ArgumentError
+      [nil, :invalid]
+    end
+
+    def response_headers(content_type)
+      {
+        "content-type" => content_type,
+        "cache-control" => "no-store",
+        "vary" => "Accept, Authorization"
+      }
     end
 
     def json_response(data)
-      [200, { "content-type" => "application/json" }, [JSON.generate(data)]]
+      [200, response_headers("application/json"), [JSON.generate(data)]]
     end
 
     def html_response(data)
-      [200, { "content-type" => "text/html; charset=utf-8" }, [render_html(data)]]
+      [200, response_headers("text/html; charset=utf-8"), [render_html(data)]]
     end
 
     def forbidden
       body = JSON.generate(error: "forbidden")
-      [403, { "content-type" => "application/json" }, [body]]
+      [403, response_headers("application/json"), [body]]
     end
 
     def render_html(data)

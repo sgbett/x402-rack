@@ -67,6 +67,8 @@ RSpec.describe X402::StatusEndpoint do
       status, headers, body = app.call(authed_env("/_x402/status"))
       expect(status).to eq(200)
       expect(headers["content-type"]).to start_with("text/html")
+      expect(headers["cache-control"]).to eq("no-store")
+      expect(headers["vary"]).to eq("Accept, Authorization")
       html = body.first
       expect(html).to include(test_pubkey_hex)
       expect(html).to include(test_address)
@@ -79,6 +81,8 @@ RSpec.describe X402::StatusEndpoint do
       status, headers, body = app.call(authed_env("/_x402/status?format=json"))
       expect(status).to eq(200)
       expect(headers["content-type"]).to eq("application/json")
+      expect(headers["cache-control"]).to eq("no-store")
+      expect(headers["vary"]).to eq("Accept, Authorization")
       data = JSON.parse(body.first)
       expect(data["x402_rack_version"]).to eq(X402::VERSION)
       expect(data["identity"]["public_key"]).to eq(test_pubkey_hex)
@@ -98,8 +102,9 @@ RSpec.describe X402::StatusEndpoint do
     before { configure_with(token: "secret-token") }
 
     it "returns 403 with no Authorization header (even from localhost)" do
-      status, _headers, body = app.call(env_for("/_x402/status", "REMOTE_ADDR" => "127.0.0.1"))
+      status, headers, body = app.call(env_for("/_x402/status", "REMOTE_ADDR" => "127.0.0.1"))
       expect(status).to eq(403)
+      expect(headers["cache-control"]).to eq("no-store")
       expect(JSON.parse(body.first)).to eq("error" => "forbidden")
     end
 
@@ -130,6 +135,12 @@ RSpec.describe X402::StatusEndpoint do
 
     it "accepts valid bearer from any remote address" do
       env = authed_env("/_x402/status", "REMOTE_ADDR" => "1.2.3.4")
+      status, _headers, _body = app.call(env)
+      expect(status).to eq(200)
+    end
+
+    it "accepts case-insensitive Bearer scheme" do
+      env = env_for("/_x402/status", "HTTP_AUTHORIZATION" => "bearer secret-token")
       status, _headers, _body = app.call(env)
       expect(status).to eq(200)
     end
@@ -230,6 +241,28 @@ RSpec.describe X402::StatusEndpoint do
       expect(status).to eq(200)
       expect(body.first).to include("(not configured)")
       expect(body.first).to include("server_wif is not configured")
+    end
+  end
+
+  describe "with invalid server_wif" do
+    before do
+      X402.reset_configuration!
+      X402.configure do |c|
+        c.domain = "api.example.com"
+        c.server_wif = "not-a-real-wif"
+        c.payee_locking_script_hex = "76a914#{"aa" * 20}88ac"
+        c.gateways = [mock_gateway]
+        c.protect(method: "GET", path: "/premium", amount_sats: 50)
+        c.status_endpoint_token = "secret-token"
+        c.enable_status_endpoint
+      end
+    end
+
+    it "surfaces a distinct invalid-WIF message rather than silently swallowing" do
+      status, _headers, body = app.call(authed_env("/_x402/status"))
+      expect(status).to eq(200)
+      expect(body.first).to include("(not configured)")
+      expect(body.first).to include("server_wif is set but failed to parse")
     end
   end
 
