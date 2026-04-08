@@ -4,25 +4,26 @@ Rack middleware for payment-gated HTTP using BSV (Bitcoin SV) and the [x402 prot
 
 The middleware is a pure dispatcher — it matches routes, issues payment challenges, and routes proofs to pluggable gateway backends for settlement. It has no blockchain knowledge and holds no keys.
 
-## Status
-
-v0.3.0 — PayGateway, ProofGateway, and BRC105Gateway all functional with e2e tests against BSV testnet. See [CHANGELOG.md](CHANGELOG.md) for release history and [DESIGN.md](DESIGN.md) for architecture notes.
-
 ## Installation
 
-Add to your Gemfile:
-
 ```ruby
-gem "x402-rack", git: "https://github.com/sgbett/x402-rack.git"
+# Gemfile
+gem "x402-rack"
 ```
 
-## Usage
+```bash
+bundle install
+```
 
-### Configuration DSL (recommended)
+## Quick start
 
-The DSL handles shared dependencies (ARC client, payee script) and gateway
-construction automatically. You declare *what* you want; the middleware builds it
-at validation time.
+Set up a server wallet:
+
+```bash
+bundle exec rake x402:wallet:setup
+```
+
+Then add the middleware:
 
 ```ruby
 # config.ru or Rails initialiser
@@ -30,14 +31,8 @@ require "x402"
 
 X402.configure do |config|
   config.domain = "api.example.com"
-  config.server_wif = ENV["SERVER_WIF"]  # recommended — derives unique addresses per payment
-
-  # Shared ARC connection — built once, used by all gateways
+  config.wallet = X402::Wallet.load
   config.arc_url = "https://arc.taal.com"
-  config.arc_api_key = "..."          # optional — ARC supports anonymous access
-
-  # Enable gateways — constructed automatically from shared deps
-  config.enable :pay_gateway
 
   config.protect method: :GET, path: "/api/expensive", amount_sats: 100
 end
@@ -45,63 +40,78 @@ end
 use X402::Middleware
 ```
 
-#### Convenience options
+That's it. With `wallet:` set and no explicit `enable` calls, both zero-config gateways are auto-wired:
 
-Each gateway type supports convenience options that expand into their full form:
+- **`PayGateway`** — Coinbase v2 headers (`Payment-Required` / `Payment-Signature` / `Payment-Response`)
+- **`BRC121Gateway`** — BSV Association simple 402 payments (`x-bsv-sats` / `x-bsv-server` / `x-bsv-beef` …)
 
-- **`:brc105_gateway`** — `server_wif: "L3..."` builds a `KeyDeriver` from a WIF
-  string. `server_key:` accepts a `PrivateKey` directly. A default in-memory
-  `PrefixStore` is used if `prefix_store:` is not provided.
-- **`:proof_gateway`** — requires `nonce_provider:` callable. The provider
-  receives `(rack_request, payee:, amount:)` and returns nonce UTXO metadata.
-- **`:pay_gateway`** — pass-through options: `arc_wait_for:`, `arc_timeout:`,
-  `binding_mode:`, `wallet:`, `challenge_secret:`.
+Clients can pay using whichever protocol they support; the middleware dispatches on proof header.
 
-#### Per-gateway overrides
+## Gateways
 
-Any gateway can override shared dependencies:
+| Gateway | Setup required | Status |
+|---------|----------------|--------|
+| `PayGateway` (Coinbase v2) | None — auto-enabled | Stable |
+| `BRC121Gateway` (BRC-121) | None — auto-enabled | Stable |
+| `BRC105Gateway` (BRC-105) | Requires BRC-103 middleware per spec; transitional HTTP-header stopgap for now | Transitional |
+| `ProofGateway` (merkleworks) | Experimental | Under development |
 
-```ruby
-config.enable :pay_gateway, arc_client: my_custom_arc
-config.enable :proof_gateway, nonce_provider: np, payee_locking_script_hex: "deadbeef..."
-```
+`PayGateway` and `BRC121Gateway` are the two zero-config gateways — both work with just a wallet. `BRC105Gateway` and `ProofGateway` are opt-in via `config.enable`.
 
-#### Order independence
+## Advanced configuration
 
-`enable` records gateway specs; construction is deferred to `validate!`. This
-means `arc_url` can be set after `enable` calls — order within the configure
-block does not matter.
-
-### Manual gateway construction (power-user escape hatch)
-
-For full control, construct gateways yourself and assign them directly. This
-bypasses DSL construction entirely and works exactly as before:
+### Explicit gateway enablement
 
 ```ruby
 X402.configure do |config|
   config.domain = "api.example.com"
-  config.payee_locking_script_hex = "76a914...88ac"
+  config.wallet = X402::Wallet.load
+  config.arc_url = "https://arc.taal.com"
 
+  config.enable :pay_gateway                           # explicit, same as default
+  config.enable :brc105_gateway                        # opt in to BRC-105
+  config.enable :proof_gateway, nonce_provider: my_np  # opt in to ProofGateway
+end
+```
+
+If any `config.enable` calls are made, the auto-enable is skipped — you get exactly what you asked for.
+
+### Per-gateway overrides
+
+```ruby
+config.enable :pay_gateway, arc_client: my_custom_arc
+config.enable :brc121_gateway, wallet: alt_wallet
+```
+
+### Manual gateway construction (power-user escape hatch)
+
+```ruby
+X402.configure do |config|
+  config.domain = "api.example.com"
   config.gateways = [
     X402::BSV::PayGateway.new(
       arc_client: BSV::Network::ARC.new("https://arc.taal.com", api_key: "..."),
-      payee_locking_script_hex: "76a914...88ac"
+      wallet: my_wallet
     ),
-    X402::BSV::BRC105Gateway.new(
-      key_deriver: BSV::Wallet::KeyDeriver.new(server_private_key),
-      prefix_store: X402::BSV::PrefixStore::Memory.new,
-      arc_client: arc_client
-    )
+    X402::BSV::BRC121Gateway.new(wallet: my_wallet)
   ]
-
   config.protect method: :GET, path: "/api/expensive", amount_sats: 100
 end
-
-use X402::Middleware
 ```
 
-If `config.gateways` is set to a non-empty array, any `enable` calls are
-ignored.
+When `config.gateways` is set, any `enable` calls and the auto-enable are ignored.
+
+### Wallet options
+
+`X402::Wallet.load` resolves the signing key in this order:
+
+1. `SERVER_WIF` environment variable (wins if set)
+2. `~/.bsv-wallet/wallet.key` (or `BSV_WALLET_DIR/wallet.key`) — written by `rake x402:wallet:setup`
+3. Raises `ConfigurationError` suggesting the setup task
+
+The Rake task never overwrites an existing `wallet.key`. Pass `FORCE=1` to replace an existing wallet (destructive).
+
+Backwards-compat alternatives still work: `config.server_wif = ENV["SERVER_WIF"]` or `config.payee_locking_script_hex = "76a914...88ac"`.
 
 ## How It Works
 
@@ -111,13 +121,14 @@ ignored.
 4. Middleware dispatches the proof to the matching gateway for settlement
 5. Gateway verifies and settles — middleware serves or rejects
 
-Three BSV settlement schemes are supported:
+Four BSV settlement schemes are supported:
 
-- **BSV-pay** (Coinbase v2 headers) — server broadcasts via ARC. No nonces, minimal infrastructure.
-- **BSV-proof** (merkleworks x402) — client broadcasts, server checks mempool. Nonce-bound, request-binding.
-- **BRC-105** (BSV Association `x-bsv-*` headers) — BRC-29 key derivation for unique payment addresses. Works standalone or composes with BRC-103 mutual authentication.
+- **BSV-pay** (Coinbase v2 headers) — server broadcasts via ARC. Partial transaction template, unique derived addresses per payment.
+- **BRC-121** (BSV Association simple) — stateless, BRC-100 wallet-native, zero config.
+- **BRC-105** (BSV Association authenticated) — transitional; requires BRC-103 for spec compliance.
+- **BSV-proof** (merkleworks) — experimental; client broadcasts, server checks mempool.
 
-BSV-pay and BSV-proof produce partial transaction templates that clients extend. BRC-105 uses a different model — the client builds the entire transaction using BRC-29 derived addresses. See [DESIGN.md](DESIGN.md) for details.
+See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/](docs/) for full documentation.
 
 ## Development
 

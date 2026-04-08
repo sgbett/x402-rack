@@ -53,12 +53,14 @@ nav:
   - Ecosystem: ecosystem.md
   - Schemes:
       - BSV-pay: schemes/bsv-pay.md
-      - BSV-proof: schemes/bsv-proof.md
+      - BRC-121: schemes/brc-121.md
       - BRC-105: schemes/brc-105.md
+      - BSV-proof: schemes/bsv-proof.md
   - Process Flows:
       - PayGateway: process-flow/pay-gateway.md
-      - ProofGateway: process-flow/proof-gateway.md
+      - BRC121Gateway: process-flow/brc121-gateway.md
       - BRC105Gateway: process-flow/brc105-gateway.md
+      - ProofGateway: process-flow/proof-gateway.md
   - Operations:
       - Deployment: operations/deployment.md
       - Performance: operations/performance.md
