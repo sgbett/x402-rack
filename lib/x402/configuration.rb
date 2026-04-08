@@ -41,14 +41,22 @@ module X402
       arc_client key_deriver server_wif server_key prefix_store
     ].freeze
 
+    BRC121_GATEWAY_KNOWN_OPTS = %i[wallet txid_store].freeze
+
     GATEWAY_REGISTRY = {
       pay_gateway: "X402::BSV::PayGateway",
       proof_gateway: "X402::BSV::ProofGateway",
-      brc105_gateway: "X402::BSV::BRC105Gateway"
+      brc105_gateway: "X402::BSV::BRC105Gateway",
+      brc121_gateway: "X402::BSV::BRC121Gateway"
     }.freeze
 
+    # Gateways auto-enabled when +wallet:+ is set and no explicit
+    # +enable+ or +gateways=+ calls were made. Both work zero-config
+    # with a BRC-100 wallet and expose non-overlapping proof headers.
+    DEFAULT_GATEWAYS = %i[pay_gateway brc121_gateway].freeze
+
     attr_accessor :domain, :payee_locking_script_hex, :gateways,
-                  :arc_url, :arc_api_key, :arc_client, :server_wif,
+                  :arc_url, :arc_api_key, :arc_client, :server_wif, :wallet,
                   :exchange_rate_provider, :logger,
                   :status_endpoint_path, :status_endpoint_token
     attr_reader :routes, :gateway_specs
@@ -121,12 +129,18 @@ module X402
       @shared_arc_client ||= build_arc_client
     end
 
-    # Returns a memoised ProtoWallet built from +server_wif+.
-    # Used as the shared wallet for all gateways, providing per-payment
-    # derived addresses via BRC-42/43 key derivation.
+    # Returns the shared wallet used by all gateways for key derivation
+    # (BRC-42/43) and, where supported, payment internalisation.
     #
-    # @return [BSV::Wallet::ProtoWallet, nil]
+    # Resolution order:
+    #   1. An explicitly-set +@wallet+ (any BRC-100 compatible wallet,
+    #      typically a +BSV::Wallet::WalletClient+)
+    #   2. A +ProtoWallet+ built from +server_wif+ (backwards compat)
+    #   3. +nil+ if neither is set
+    #
+    # @return [BSV::Wallet::ProtoWallet, BSV::Wallet::WalletClient, nil]
     def shared_wallet
+      return @wallet if @wallet
       return if @server_wif.nil? || @server_wif.empty?
 
       @shared_wallet ||= build_wallet
@@ -176,6 +190,7 @@ module X402
       raise ConfigurationError, "domain is required" if domain.nil? || domain.empty?
 
       validate_payee_source!
+      auto_enable_default_gateways! if should_auto_enable_defaults?
       build_gateways_from_specs! if gateways.empty? && !gateway_specs.empty?
       validate_gateways!
       warn_operational_concerns!
@@ -285,11 +300,25 @@ module X402
 
     def validate_payee_source!
       has_payee = payee_locking_script_hex && !payee_locking_script_hex.empty?
-      has_wallet = @server_wif && !@server_wif.empty?
+      has_server_wif = @server_wif && !@server_wif.empty?
+      has_wallet = !@wallet.nil?
 
-      return if has_payee || has_wallet
+      return if has_payee || has_server_wif || has_wallet
 
-      raise ConfigurationError, "server_wif or payee_locking_script_hex is required"
+      raise ConfigurationError, "wallet, server_wif, or payee_locking_script_hex is required"
+    end
+
+    # Auto-enables +pay_gateway+ and +brc121_gateway+ when a +wallet+ has
+    # been set and the caller has not explicitly enabled any gateways.
+    #
+    # This is the "plug-and-play" path — configure the wallet and protected
+    # routes, and both zero-config gateways are wired up automatically.
+    def should_auto_enable_defaults?
+      !@wallet.nil? && gateway_specs.empty? && (gateways.nil? || gateways.empty?)
+    end
+
+    def auto_enable_default_gateways!
+      DEFAULT_GATEWAYS.each { |name| enable(name) }
     end
 
     def build_arc_client
@@ -313,6 +342,7 @@ module X402
         when "X402::BSV::PayGateway" then build_pay_gateway(klass, options)
         when "X402::BSV::ProofGateway" then build_proof_gateway(klass, options)
         when "X402::BSV::BRC105Gateway" then build_brc105_gateway(klass, options)
+        when "X402::BSV::BRC121Gateway" then build_brc121_gateway(klass, options)
         end
       end
     end
@@ -373,6 +403,19 @@ module X402
         prefix_store: options[:prefix_store] || X402::BSV::PrefixStore::Memory.new,
         arc_client: options[:arc_client] || shared_arc_client
       )
+    end
+
+    def build_brc121_gateway(klass, options)
+      reject_unknown_options!(:brc121_gateway, options, BRC121_GATEWAY_KNOWN_OPTS)
+      wallet = options[:wallet] || @wallet
+      unless wallet
+        raise ConfigurationError,
+              "brc121_gateway requires wallet: (or top-level config.wallet =)"
+      end
+
+      opts = { wallet: wallet }
+      opts[:txid_store] = options[:txid_store] if options.key?(:txid_store)
+      klass.new(**opts)
     end
 
     # -- Option validation ---------------------------------------------------
