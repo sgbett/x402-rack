@@ -218,6 +218,9 @@ RSpec.describe X402::BSV::ProofGateway do
     end
 
     it "raises when mempool check fails" do
+      # Zero out retry delays so the spec doesn't wait in real time.
+      stub_const("#{described_class}::MEMPOOL_RETRY_DELAYS_SECONDS", [].freeze)
+
       failing_arc = Object.new
       def failing_arc.status(_txid)
         raise "connection refused"
@@ -254,6 +257,85 @@ RSpec.describe X402::BSV::ProofGateway do
 
       expect { failing_gw.settle!("X402-Proof", proof_header2, request, route) }
         .to raise_error(X402::VerificationError, /mempool/)
+    end
+
+    it "retries the mempool check until ARC reports an acceptable status" do
+      stub_const("#{described_class}::MEMPOOL_RETRY_DELAYS_SECONDS", [0.0, 0.0, 0.0].freeze)
+
+      # ARC first reports UNKNOWN (the tx hasn't been observed yet),
+      # then SEEN_ON_NETWORK on the next poll. The gateway should
+      # accept the retry and return a SettlementResult.
+      status_sequence = %w[UNKNOWN SEEN_ON_NETWORK]
+      arc_stub = Object.new
+      arc_stub.define_singleton_method(:status) do |_txid|
+        Struct.new(:txid, :tx_status).new(nil, status_sequence.shift || "SEEN_ON_NETWORK")
+      end
+
+      retrying_gw = described_class.new(
+        nonce_provider: nonce_provider,
+        arc_client: arc_stub,
+        payee_locking_script_hex: payee_hex
+      )
+
+      request = mock_request
+      headers = retrying_gw.challenge_headers(request, route)
+      challenge = X402::Challenge.from_header(headers["X402-Challenge"])
+
+      transaction = BSV::Transaction::Transaction.new
+      transaction.add_input(BSV::Transaction::TransactionInput.new(
+                              prev_tx_id: [nonce_txid].pack("H*").reverse,
+                              prev_tx_out_index: 0,
+                              unlocking_script: BSV::Script::Script.new("\x00".b)
+                            ))
+      transaction.add_output(BSV::Transaction::TransactionOutput.new(satoshis: 50, locking_script: payee_script))
+
+      proof_data = {
+        challenge_sha256: challenge.sha256_hex,
+        payment: { rawtx_b64: Base64.strict_encode64(transaction.to_binary), txid: transaction.txid_hex }
+      }
+      proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
+      request.env["HTTP_X402_CHALLENGE"] = headers["X402-Challenge"]
+
+      result = retrying_gw.settle!("X402-Proof", proof_header, request, route)
+      expect(result).to be_a(X402::SettlementResult)
+      expect(status_sequence).to be_empty # both calls consumed
+    end
+
+    it "surfaces the last observed tx_status when all retries fail" do
+      stub_const("#{described_class}::MEMPOOL_RETRY_DELAYS_SECONDS", [0.0].freeze)
+
+      arc_stub = Object.new
+      def arc_stub.status(_txid)
+        Struct.new(:txid, :tx_status).new(nil, "UNKNOWN")
+      end
+
+      stuck_gw = described_class.new(
+        nonce_provider: nonce_provider,
+        arc_client: arc_stub,
+        payee_locking_script_hex: payee_hex
+      )
+
+      request = mock_request
+      headers = stuck_gw.challenge_headers(request, route)
+      challenge = X402::Challenge.from_header(headers["X402-Challenge"])
+
+      transaction = BSV::Transaction::Transaction.new
+      transaction.add_input(BSV::Transaction::TransactionInput.new(
+                              prev_tx_id: [nonce_txid].pack("H*").reverse,
+                              prev_tx_out_index: 0,
+                              unlocking_script: BSV::Script::Script.new("\x00".b)
+                            ))
+      transaction.add_output(BSV::Transaction::TransactionOutput.new(satoshis: 50, locking_script: payee_script))
+
+      proof_data = {
+        challenge_sha256: challenge.sha256_hex,
+        payment: { rawtx_b64: Base64.strict_encode64(transaction.to_binary), txid: transaction.txid_hex }
+      }
+      proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
+      request.env["HTTP_X402_CHALLENGE"] = headers["X402-Challenge"]
+
+      expect { stuck_gw.settle!("X402-Proof", proof_header, request, route) }
+        .to raise_error(X402::VerificationError, /UNKNOWN/)
     end
 
     it "raises when X402-Challenge header is missing" do

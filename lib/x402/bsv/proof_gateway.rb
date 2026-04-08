@@ -20,7 +20,39 @@ module X402
     # - Profile A: challenge includes nonce UTXO metadata only
     # - Profile B: nonce_provider returns a pre-signed partial_tx template
     class ProofGateway < Gateway
-      ACCEPTABLE_MEMPOOL_STATUSES = %w[SEEN_ON_NETWORK ANNOUNCED_TO_NETWORK MINED].freeze
+      # ARC status values that confirm ARC knows about the tx and hasn't
+      # rejected it. ARC progresses a broadcast tx through roughly:
+      #
+      #   RECEIVED → STORED → ANNOUNCED_TO_NETWORK →
+      #   REQUESTED_BY_NETWORK → SENT_TO_NETWORK →
+      #   ACCEPTED_BY_NETWORK → SEEN_ON_NETWORK → MINED
+      #
+      # Any of these mean "ARC has the tx and is processing it"; the
+      # client has demonstrably broadcast. The bad states we must reject
+      # are UNKNOWN (never seen), REJECTED, DOUBLE_SPEND_ATTEMPTED —
+      # anything in this whitelist is acceptable.
+      #
+      # Bitcoin's single-spend guarantee at the network layer is the
+      # actual replay gate; this check just confirms the client fulfilled
+      # their broadcast obligation. Matches the merkleworks reference
+      # implementation's `visible` check.
+      ACCEPTABLE_MEMPOOL_STATUSES = %w[
+        RECEIVED
+        STORED
+        ANNOUNCED_TO_NETWORK
+        REQUESTED_BY_NETWORK
+        SENT_TO_NETWORK
+        ACCEPTED_BY_NETWORK
+        SEEN_ON_NETWORK
+        MINED
+      ].freeze
+
+      # Mempool polling retry schedule. ARC typically returns an
+      # intermediate status (RECEIVED, STORED, SENT_TO_NETWORK) for a
+      # brief window after broadcast before progressing to
+      # SEEN_ON_NETWORK. A short retry loop absorbs that race without
+      # adding stateful polling infrastructure.
+      MEMPOOL_RETRY_DELAYS_SECONDS = [0.25, 0.5, 1.0].freeze
 
       # @param nonce_provider [#call] callable returning nonce UTXO hash;
       #   receives (rack_request, payee:, amount:) kwargs.
@@ -200,11 +232,26 @@ module X402
         raise VerificationError.new("no output pays >= #{required_sats} sats to payee", status: 402)
       end
 
+      # Poll ARC for the tx status, retrying briefly to absorb the
+      # propagation lag between broadcast and SEEN_ON_NETWORK. Returns
+      # on the first acceptable status; raises if no attempt succeeds.
       def check_mempool!(txid)
-        response = @arc_client.status(txid)
-        return if ACCEPTABLE_MEMPOOL_STATUSES.include?(response.tx_status)
+        attempts = MEMPOOL_RETRY_DELAYS_SECONDS.length + 1
+        last_status = nil
 
-        raise VerificationError.new("transaction not yet visible in mempool", status: 402)
+        attempts.times do |i|
+          last_status = @arc_client.status(txid).tx_status
+          break if ACCEPTABLE_MEMPOOL_STATUSES.include?(last_status)
+
+          sleep(MEMPOOL_RETRY_DELAYS_SECONDS[i]) if i < MEMPOOL_RETRY_DELAYS_SECONDS.length
+        end
+
+        return if ACCEPTABLE_MEMPOOL_STATUSES.include?(last_status)
+
+        raise VerificationError.new(
+          "transaction not yet visible in mempool (last status: #{last_status || "unknown"})",
+          status: 402
+        )
       rescue VerificationError
         raise
       rescue StandardError
