@@ -164,11 +164,9 @@ RSpec.describe "ProofGateway e2e (Profile B)", :e2e do
         }
       }
       proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
-      request.env["HTTP_X402_CHALLENGE"] = challenge_header
 
       E2ELogger.arrow(:client, :server, "GET /weather?city=lisbon")
       E2ELogger.result("X402-Proof", "#{proof_header[0..40]}...")
-      E2ELogger.result("X402-Challenge", "(echoed)")
 
       E2ELogger.separator
 

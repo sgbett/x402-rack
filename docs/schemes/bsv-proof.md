@@ -2,12 +2,17 @@
 
 The [merkleworks x402](https://x402.merkleworks.io) implementation. Client broadcasts and proves payment via mempool.
 
-!!! danger "Experimental — not production-ready"
-    The ProofGateway implementation is incomplete and under active development.
-    The nonce provider interface, Profile B provenance verification, and mempool
-    checking behaviour may change without notice. **Do not use in production.**
-    For production BSV payments, use [BSV-pay](bsv-pay.md) (PayGateway) or
-    [BRC-105](brc-105.md) (BRC105Gateway).
+!!! warning "Under development"
+    The ProofGateway tracks the merkleworks x402 spec and its reference
+    implementation. The nonce provider interface and Profile B behaviour
+    may still change as the upstream spec evolves. For production BSV
+    payments the primary recommendation remains [BSV-pay](bsv-pay.md)
+    (PayGateway) or [BRC-105](brc-105.md) (BRC105Gateway).
+
+    Settlement uses a per-instance, TTL-bounded in-memory challenge cache
+    (`X402::BSV::ChallengeStore::Memory`) to recover the server-issued
+    challenge at proof time. This is per-process only — multi-worker
+    deployments will need a shared backend before production use.
 
 ## Description
 
@@ -70,14 +75,36 @@ The `partial_tx_b64` field is present only in Profile B and is **not part of the
 ## Settlement Flow
 
 1. Decode `X402-Proof` header (base64url → proof JSON)
-2. Reconstruct challenge from echoed `X402-Challenge` header
+2. **Look up the original challenge** in the gateway's `ChallengeStore` by
+   `proof.challenge_sha256`. A miss → `challenge not found or expired`
+   (400). This is the provenance gate — an attacker cannot populate
+   the server's store, so proofs referencing a forged challenge are
+   rejected before any downstream check runs. The merkleworks spec does
+   not authorise the client to echo `X402-Challenge` back on the retry;
+   only the hash travels in the proof.
 3. Protocol checks: version, scheme, challenge hash, request binding, expiry
 4. Decode raw tx from proof
 5. Verify nonce UTXO at input index 0 (not just "any input")
 6. **Profile B**: verify nonce signature via full P2PKH script verification (`verify_input(0)`)
 7. Verify payment output against server's own payee address
 8. Check mempool visibility via ARC (`status(txid)`)
-9. Return settlement result
+9. `consume!` the challenge entry so the same proof cannot be replayed
+10. Return settlement result
+
+### Challenge cache
+
+The `ChallengeStore::Memory` backend is per-process, Monitor-synchronised,
+with a 600s TTL (longer than the 300s challenge TTL so expired challenges
+can still be cleanly rejected rather than racing against eviction). The
+store is capped (default 10_000 entries) and raises `StoreFullError`
+→ HTTP 503 when saturated.
+
+The merkleworks `docs/AUDIT.md` frames its reference implementation as
+"stateless" in the sense that UTXO single-spend is the replay gate, and
+its `replay.Cache` is "a performance optimisation only". In practice the
+reference impl relies on a separate, mandatory `ChallengeCache` for
+provenance — the same pattern used here. "Stateless" means no per-client
+session state, not no challenge-lifetime state.
 
 ### Why Client Broadcasts
 

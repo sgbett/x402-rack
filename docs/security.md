@@ -34,13 +34,40 @@ Each transaction can only be broadcast once. ARC rejects double-spends at the ne
 
 ## ProofGateway Security
 
+### Challenge Cache (Provenance Gate)
+
+Settlement recovers the original, server-issued challenge from an
+in-memory TTL-bounded `ChallengeStore` keyed by `challenge_sha256`, not
+from a client-echoed `X402-Challenge` header. The merkleworks spec only
+mandates that clients echo `challenge_sha256` in the proof — the server
+is responsible for recovering the challenge itself.
+
+This closes the forged-challenge provenance hole: an attacker cannot
+populate the server's store, so a proof referencing a challenge that was
+never issued by this server misses the cache and is rejected with
+`challenge not found or expired` (400) before any downstream check runs.
+
+The entry is `consume!`d after a successful settlement, so the same
+proof cannot be replayed against the same server. Combined with
+Bitcoin's UTXO single-spend guarantee at the network layer, this gives
+both in-window and long-term replay protection.
+
+**Per-instance, in-memory**: the default `ChallengeStore::Memory` backend
+is per-process. Multi-worker deployments (e.g. Puma pre-fork) will need
+a shared backend before production use.
+
+Mirrors the merkleworks reference implementation's mandatory
+`ChallengeCache` — their `docs/AUDIT.md` frames "stateless" as "the
+replay cache is not a correctness gate" while relying on a separate
+challenge cache for provenance. Same pattern applied here.
+
 ### Nonce Provenance (Profile B)
 
 The `0xC3` signature on input 0 proves the server issued the nonce. At settlement:
 
 1. Input 0 must be the nonce UTXO (enforced by index, not `any?`)
 2. Full P2PKH script verification via `transaction.verify_input(0)` — validates signature, pubkey, and sighash
-3. Source UTXO details (satoshis, locking script) set from the challenge before verification (BIP-143 requirement)
+3. Source UTXO details (satoshis, locking script) are sourced from the **cached** challenge, not the client-echoed header — so an attacker cannot substitute their own nonce script to satisfy the provenance check
 
 **Attack prevented**: attacker crafts a fake unlocking script containing the server's public key bytes but with an invalid signature. The full script interpreter catches this — `OP_CHECKSIG` fails.
 

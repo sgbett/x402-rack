@@ -134,6 +134,37 @@ RSpec.describe X402::Middleware do
       expect(headers["x402-challenge"]).not_to be_nil
       expect(headers).not_to have_key("x-declined")
     end
+
+    it "surfaces VerificationError from challenge_headers with the intended status" do
+      # A gateway that raises 503 during challenge issuance (e.g.
+      # ProofGateway when its ChallengeStore is saturated). The
+      # middleware must not let this bubble to a generic 500.
+      saturated_gw = Object.new
+      def saturated_gw.challenge_headers(*, **)
+        raise X402::VerificationError.new("server at capacity — try again later", status: 503)
+      end
+
+      def saturated_gw.proof_header_names
+        ["X402-Proof"]
+      end
+
+      def saturated_gw.settle!(*); end
+
+      X402.reset_configuration!
+      X402.configure do |c|
+        c.domain = "api.example.com"
+        c.payee_locking_script_hex = "76a914#{"aa" * 20}88ac"
+        c.gateways = [saturated_gw]
+        c.protect(method: "GET", path: "/premium", amount_sats: 50)
+      end
+
+      env = Rack::MockRequest.env_for("/premium", method: "GET")
+      status, headers, body = app.call(env)
+
+      expect(status).to eq(503)
+      expect(headers["content-type"]).to eq("application/json")
+      expect(JSON.parse(body.first)["error"]).to match(/capacity/)
+    end
   end
 
   describe "proof dispatch" do
