@@ -57,10 +57,11 @@ sequenceDiagram
   arc->>client: HTTP/1.1 200 OK<br/>{ "txid": "...", "txStatus": "SEEN_ON_NETWORK" }
   deactivate arc
 
-  client->>server: GET /weather?city=lisbon<br/>X402-Proof: base64url(proof JSON)<br/>X402-Challenge: base64url(challenge JSON)
+  client->>server: GET /weather?city=lisbon<br/>X402-Proof: base64url(proof JSON)
 
   activate server
-  Note over server: Verify protocol checks<br/>(version, scheme, hash, binding, expiry)
+  Note over server: Look up challenge in ChallengeStore<br/>by proof.challenge_sha256
+  Note over server: Verify protocol checks<br/>(version, scheme, binding, expiry)
   Note over server: Verify nonce at input[0]<br/>Verify signature (Profile B)<br/>Verify payment output
 
   server->>arc: GET /v1/tx/{txid}
@@ -85,6 +86,6 @@ sequenceDiagram
 - **0xC3 sighash** — `SIGHASH_SINGLE | ANYONECANPAY | FORKID` commits to output 0 (payment) while allowing additional inputs and outputs. See [architecture.md](../architecture.md#why-0xc3-for-the-nonce-signature).
 - **Fee delegation is optional** — shown as `opt` in the diagram. Most clients can fund their own fees (1-50 sats). The delegator adds fee inputs and signs only those.
 - **Client signs with 0xC1** — `SIGHASH_ALL | ANYONECANPAY | FORKID` on funding inputs. Commits to all outputs but allows the delegator to append fee inputs.
-- **Echoed challenge** — the client returns the original `X402-Challenge` header alongside the proof. The server reconstructs and verifies it (hash, binding, expiry).
+- **Challenge cache** — the client only echoes `challenge_sha256` in the proof (per the merkleworks spec). The server recovers the original challenge from a per-instance TTL-bounded `ChallengeStore` keyed by that hash. A cache miss rejects the proof before any downstream check runs. The entry is consumed on successful settlement, killing same-proof replay.
 - **Nonce provenance (Profile B)** — the server verifies the signature on input 0 via the SDK's script interpreter (`verify_input(0)`). Proves the server issued the nonce.
 - **Request binding** — the challenge includes `SHA256(method + path + query + headers + body)` hashes. Verified against the current request at settlement.

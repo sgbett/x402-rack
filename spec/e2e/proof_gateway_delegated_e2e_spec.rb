@@ -226,7 +226,6 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
         }
       }
       proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
-      request.env["HTTP_X402_CHALLENGE"] = challenge_header
 
       E2ELogger.arrow(:client, :server, "GET /weather?city=lisbon + X402-Proof")
 

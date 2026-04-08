@@ -129,8 +129,7 @@ RSpec.describe X402::BSV::ProofGateway do
 
     it "returns SettlementResult on valid proof" do
       request = mock_request
-      challenge_header, proof_header = build_valid_proof(request)
-      request.env["HTTP_X402_CHALLENGE"] = challenge_header
+      _, proof_header = build_valid_proof(request)
 
       result = gateway.settle!("X402-Proof", proof_header, request, route)
       expect(result).to be_a(X402::SettlementResult)
@@ -140,9 +139,11 @@ RSpec.describe X402::BSV::ProofGateway do
 
     it "raises on tampered challenge hash" do
       request = mock_request
-      challenge_header, = build_valid_proof(request)
-      request.env["HTTP_X402_CHALLENGE"] = challenge_header
+      build_valid_proof(request)
 
+      # A tampered hash does not match any issued challenge in the store,
+      # so settlement misses the cache rather than progressing to the
+      # hash recompute check. Either rejection closes the replay vector.
       bad_proof = {
         challenge_sha256: "00" * 32,
         payment: { rawtx_b64: "dHg=", txid: "aa" * 32 }
@@ -150,13 +151,12 @@ RSpec.describe X402::BSV::ProofGateway do
       proof_header = X402::Base64Url.encode(JSON.generate(bad_proof))
 
       expect { gateway.settle!("X402-Proof", proof_header, request, route) }
-        .to raise_error(X402::VerificationError, /challenge hash/)
+        .to raise_error(X402::VerificationError, /challenge not found/)
     end
 
     it "raises when nonce UTXO is not spent in transaction" do
       request = mock_request
       challenge_header, = build_valid_proof(request)
-      request.env["HTTP_X402_CHALLENGE"] = challenge_header
 
       # Tx with wrong input (not the nonce)
       transaction = BSV::Transaction::Transaction.new
@@ -188,7 +188,6 @@ RSpec.describe X402::BSV::ProofGateway do
     it "raises on insufficient payment" do
       request = mock_request
       challenge_header, = build_valid_proof(request)
-      request.env["HTTP_X402_CHALLENGE"] = challenge_header
       challenge = X402::Challenge.from_header(challenge_header)
 
       # Tx with correct nonce but insufficient payment
@@ -253,7 +252,6 @@ RSpec.describe X402::BSV::ProofGateway do
         payment: { rawtx_b64: Base64.strict_encode64(transaction.to_binary), txid: transaction.txid_hex }
       }
       proof_header2 = X402::Base64Url.encode(JSON.generate(proof_data))
-      request.env["HTTP_X402_CHALLENGE"] = challenge_header2
 
       expect { failing_gw.settle!("X402-Proof", proof_header2, request, route) }
         .to raise_error(X402::VerificationError, /mempool/)
@@ -294,7 +292,6 @@ RSpec.describe X402::BSV::ProofGateway do
         payment: { rawtx_b64: Base64.strict_encode64(transaction.to_binary), txid: transaction.txid_hex }
       }
       proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
-      request.env["HTTP_X402_CHALLENGE"] = headers["X402-Challenge"]
 
       result = retrying_gw.settle!("X402-Proof", proof_header, request, route)
       expect(result).to be_a(X402::SettlementResult)
@@ -332,19 +329,55 @@ RSpec.describe X402::BSV::ProofGateway do
         payment: { rawtx_b64: Base64.strict_encode64(transaction.to_binary), txid: transaction.txid_hex }
       }
       proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
-      request.env["HTTP_X402_CHALLENGE"] = headers["X402-Challenge"]
 
       expect { stuck_gw.settle!("X402-Proof", proof_header, request, route) }
         .to raise_error(X402::VerificationError, /UNKNOWN/)
     end
 
-    it "raises when X402-Challenge header is missing" do
+    it "raises when the referenced challenge was never issued by this server" do
       request = mock_request
+      # No prior challenge_headers call — the store is empty.
       proof_data = { challenge_sha256: "aa" * 32, payment: { rawtx_b64: "dHg=", txid: "bb" * 32 } }
       proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
 
       expect { gateway.settle!("X402-Proof", proof_header, request, route) }
-        .to raise_error(X402::VerificationError, /missing X402-Challenge/)
+        .to raise_error(X402::VerificationError, /challenge not found/)
+    end
+
+    it "rejects the same proof replayed a second time" do
+      request = mock_request
+      _, proof_header = build_valid_proof(request)
+
+      gateway.settle!("X402-Proof", proof_header, request, route)
+
+      expect { gateway.settle!("X402-Proof", proof_header, request, route) }
+        .to raise_error(X402::VerificationError, /challenge not found/)
+    end
+
+    it "rejects a forged challenge not issued by this server" do
+      # Attacker crafts their own challenge with an attacker-controlled
+      # nonce and computes the matching sha256. Without a corresponding
+      # entry in the server's challenge store, the proof misses the cache.
+      request = mock_request
+      forged = X402::Challenge.new(
+        version: 1, scheme: "bsv-tx-v1",
+        domain: "api.example.com", method: "GET", path: "/premium", query: "",
+        req_headers_sha256: X402::RequestBinding.headers_sha256(request),
+        req_body_sha256: X402::RequestBinding.body_sha256(request),
+        amount_sats: 50, payee_locking_script_hex: payee_hex,
+        nonce_txid: "ff" * 32, nonce_vout: 0, nonce_satoshis: 1,
+        nonce_locking_script_hex: "76a914#{"ee" * 20}88ac",
+        expires_at: Time.now.to_i + 300
+      )
+
+      proof_data = {
+        challenge_sha256: forged.sha256_hex,
+        payment: { rawtx_b64: "dHg=", txid: "bb" * 32 }
+      }
+      proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
+
+      expect { gateway.settle!("X402-Proof", proof_header, request, route) }
+        .to raise_error(X402::VerificationError, /challenge not found/)
     end
   end
 
@@ -480,7 +513,6 @@ RSpec.describe X402::BSV::ProofGateway do
         proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
 
         # Step 4: Settle
-        request.env["HTTP_X402_CHALLENGE"] = challenge_header
         result = profile_b_gateway.settle!("X402-Proof", proof_header, request, route)
 
         expect(result).to be_a(X402::SettlementResult)
@@ -539,7 +571,6 @@ RSpec.describe X402::BSV::ProofGateway do
           payment: { rawtx_b64: Base64.strict_encode64(tx.to_binary), txid: tx.txid_hex }
         }
         proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
-        request.env["HTTP_X402_CHALLENGE"] = challenge_header
 
         expect { profile_b_gateway.settle!("X402-Proof", proof_header, request, route) }
           .to raise_error(X402::VerificationError, /nonce UTXO must be at input index 0/)
@@ -574,7 +605,6 @@ RSpec.describe X402::BSV::ProofGateway do
           payment: { rawtx_b64: Base64.strict_encode64(tx.to_binary), txid: tx.txid_hex }
         }
         proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
-        request.env["HTTP_X402_CHALLENGE"] = challenge_header
 
         expect { profile_b_gateway.settle!("X402-Proof", proof_header, request, route) }
           .to raise_error(X402::VerificationError, /nonce.*failed/)

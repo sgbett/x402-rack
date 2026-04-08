@@ -59,12 +59,16 @@ module X402
       #   Profile B providers include :partial_tx (binary) in the response.
       # @param arc_client [#status] ARC client for mempool queries
       # @param payee_locking_script_hex [String, nil] payee script (falls back to config)
+      # @param challenge_store [#store!, #lookup, #consume!] per-instance
+      #   challenge cache (default: in-memory, per-process).
       def initialize(nonce_provider:, arc_client:,
-                     payee_locking_script_hex: nil, wallet: nil, challenge_secret: nil)
+                     payee_locking_script_hex: nil, wallet: nil, challenge_secret: nil,
+                     challenge_store: nil)
         super(payee_locking_script_hex: payee_locking_script_hex, wallet: wallet,
               challenge_secret: challenge_secret)
         @nonce_provider = nonce_provider
         @arc_client = arc_client
+        @challenge_store = challenge_store || ChallengeStore::Memory.new
       end
 
       # Build a 402 challenge with merkleworks +X402-Challenge+ header.
@@ -79,6 +83,11 @@ module X402
                 "proof_gateway does not support callable amount_sats (fiat pricing) — use a static value"
         end
         challenge = build_merkleworks_challenge(rack_request, route)
+        begin
+          @challenge_store.store!(challenge.sha256_hex, challenge)
+        rescue ChallengeStore::StoreFullError
+          raise VerificationError.new("server at capacity — try again later", status: 503)
+        end
         { "X402-Challenge" => challenge.to_header }
       end
 
@@ -98,15 +107,39 @@ module X402
       def settle!(_header_name, proof_payload, rack_request, route)
         required_sats = route.resolve_amount_sats
         proof = Proof.from_header(proof_payload)
-        challenge = reconstruct_challenge(rack_request)
+        challenge = lookup_challenge!(proof)
         run_protocol_checks!(challenge, proof, rack_request)
         decode_and_verify_transaction!(proof, challenge, required_sats)
         check_mempool!(proof.txid)
+        consume_challenge!(proof)
 
         SettlementResult.new(txid: proof.txid, network: "bsv:mainnet")
       end
 
       private
+
+      # Recover the original server-issued challenge from the cache, keyed
+      # by the hash the client echoes in the proof. This is the provenance
+      # gate: the attacker cannot populate this store, so a proof
+      # referencing a forged challenge will miss and be rejected.
+      def lookup_challenge!(proof)
+        if proof.challenge_sha256.nil? || proof.challenge_sha256.empty?
+          raise VerificationError.new("missing challenge_sha256 in proof", status: 400)
+        end
+
+        challenge = @challenge_store.lookup(proof.challenge_sha256)
+        return challenge if challenge
+
+        raise VerificationError.new("challenge not found or expired", status: 400)
+      end
+
+      # Atomically remove the challenge after a successful settlement.
+      # A second attempt with the same proof will miss the cache and be
+      # rejected with "challenge not found or expired", closing the
+      # same-proof replay vector without a separate txid dedup store.
+      def consume_challenge!(proof)
+        @challenge_store.consume!(proof.challenge_sha256)
+      end
 
       def build_merkleworks_challenge(rack_request, route)
         config = X402.configuration
@@ -148,15 +181,6 @@ module X402
         end
 
         Challenge.new(attrs)
-      end
-
-      def reconstruct_challenge(rack_request)
-        challenge_header = rack_request.env["HTTP_X402_CHALLENGE"]
-        if challenge_header.nil? || challenge_header.empty?
-          raise VerificationError.new("missing X402-Challenge header", status: 400)
-        end
-
-        Challenge.from_header(challenge_header)
       end
 
       def run_protocol_checks!(challenge, proof, rack_request)

@@ -7,8 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ProofGateway challenge cache** — new `X402::BSV::ChallengeStore::Memory`,
+  a per-process TTL-bounded store of issued challenges keyed by their
+  canonical sha256. `ProofGateway` records each challenge at issuance and
+  looks it up at settlement instead of trusting a client-echoed
+  `X402-Challenge` header. Closes the forged-challenge provenance hole
+  (#23) and kills same-proof replay (the entry is consumed on successful
+  settlement). Matches the merkleworks reference implementation's
+  mandatory `ChallengeCache` pattern without otherwise aligning with
+  their architecture.
+
 ### Changed
 
+- **ProofGateway no longer consults the echoed `X402-Challenge` header at
+  settlement.** The merkleworks spec only mandates that clients echo
+  `challenge_sha256` in the proof; the server recovers the original
+  challenge from its own store. Proofs referencing a challenge that was
+  never issued by this server (or has been consumed / expired) are now
+  rejected with `challenge not found or expired` (400).
+- **ProofGateway documentation softened** — the "experimental, do not use
+  in production" warning on the BSV-proof scheme doc has been replaced
+  with an "under development" note reflecting the closed provenance
+  hole and the per-instance cache limitation.
 - **ProofGateway mempool check is now propagation-tolerant.**
   `check_mempool!` retries ARC status (4 attempts, ~1.75s total
   worst case) to absorb the window between broadcast and
