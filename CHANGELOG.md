@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **ProofGateway mempool check is now propagation-tolerant.**
+  `check_mempool!` retries ARC status (4 attempts, ~1.75s total
+  worst case) to absorb the window between broadcast and
+  `SEEN_ON_NETWORK`. The acceptable-status whitelist has been
+  broadened to include every non-error ARC state (`RECEIVED`,
+  `STORED`, `ANNOUNCED_TO_NETWORK`, `REQUESTED_BY_NETWORK`,
+  `SENT_TO_NETWORK`, `ACCEPTED_BY_NETWORK`, `SEEN_ON_NETWORK`,
+  `MINED`). Matches the merkleworks reference implementation's
+  `visible` check — Bitcoin's single-spend at the network layer
+  remains the actual replay gate. Error message now surfaces the
+  last observed status to aid ops debugging.
+
 ## [0.6.0] - 2026-04-05
 
 ### Added
