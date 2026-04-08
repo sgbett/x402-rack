@@ -54,6 +54,9 @@ module X402
       NETWORK = "bsv:mainnet"
       FRESHNESS_WINDOW_MS = 30_000
       COMPRESSED_PUBKEY_HEX = /\A0[23][0-9a-f]{64}\z/
+      # BRC-29 derivation prefix is base64. Cap length at 128 chars
+      # (~96 bytes decoded) — well above realistic nonce sizes.
+      BASE64_NONCE = %r{\A[A-Za-z0-9+/]{1,128}={0,2}\z}
       PROTOCOL = "wallet payment"
       CLIENT_HEADERS = %w[x-bsv-beef x-bsv-sender x-bsv-nonce x-bsv-time x-bsv-vout].freeze
 
@@ -101,6 +104,7 @@ module X402
         required_sats = route.resolve_amount_sats
         headers = extract_client_headers!(rack_request)
         validate_sender_identity_key!(headers["x-bsv-sender"])
+        validate_nonce!(headers["x-bsv-nonce"])
         validate_timestamp_freshness!(headers["x-bsv-time"])
         output_index = parse_output_index!(headers["x-bsv-vout"])
         subject_tx = parse_beef_transaction(headers["x-bsv-beef"])
@@ -146,6 +150,16 @@ module X402
         return if sender.is_a?(String) && sender.match?(COMPRESSED_PUBKEY_HEX)
 
         raise VerificationError.new("invalid x-bsv-sender (expected 33-byte compressed pubkey hex)", status: 400)
+      end
+
+      # BRC-121 §1: "Base64-encoded BRC-29 derivation prefix for the payment."
+      # Validate format and length before passing to the wallet — an
+      # unvalidated attacker-controlled string should not reach the
+      # cryptographic derivation pipeline.
+      def validate_nonce!(nonce)
+        return if nonce.match?(BASE64_NONCE)
+
+        raise VerificationError.new("invalid x-bsv-nonce (expected base64 derivation prefix)", status: 400)
       end
 
       # §5 step 2: "If the value is not a valid number, or differs from the
@@ -222,8 +236,11 @@ module X402
       rescue VerificationError
         raise
       rescue StandardError => e
+        # Log the full error server-side; return a generic message to the
+        # client to avoid leaking wallet internals (paths, key derivation
+        # state, storage errors) in the HTTP response body.
         logger.error "[brc121] internalize_action failed: #{e.class}: #{e.message}"
-        raise VerificationError.new("payment internalisation failed: #{e.message}", status: 402)
+        raise VerificationError.new("payment internalisation failed", status: 402)
       end
 
       def build_settlement_result(transaction, paid_sats)

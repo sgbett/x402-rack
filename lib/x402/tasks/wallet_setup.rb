@@ -57,6 +57,11 @@ module X402
 
       def ensure_dir!
         FileUtils.mkdir_p(dir, mode: 0o700)
+        # mkdir_p only applies the mode when creating a new directory.
+        # If the directory pre-existed with weaker permissions, force
+        # them to 0700 so the wallet key is never exposed via directory
+        # traversal.
+        File.chmod(0o700, dir)
       rescue StandardError => e
         abort "[x402] could not create wallet dir #{dir}: #{e.message}"
       end
@@ -133,6 +138,11 @@ module X402
         File.open(key_path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |f|
           f.write("#{wif}\n")
         end
+        # File.open only applies the mode when creating a new file.
+        # On FORCE=1 overwrite of an existing file, the mode argument is
+        # silently ignored — enforce it explicitly so the mode announced
+        # to the user is the actual on-disk mode.
+        File.chmod(0o600, key_path)
       end
 
       def announce_wallet(wif, action:)

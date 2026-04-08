@@ -181,6 +181,31 @@ RSpec.describe X402::BSV::BRC121Gateway do
       end
     end
 
+    # Nonce format (security hardening — reject before wallet call)
+    context "invalid x-bsv-nonce" do
+      it "rejects a nonce with non-base64 characters" do
+        env = paid_request_env(beef_b64: beef_b64, nonce: "not$valid!base64")
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.status).to eq(400)
+            expect(e.reason).to include("x-bsv-nonce")
+          }
+      end
+
+      it "rejects a nonce that exceeds the length cap" do
+        env = paid_request_env(beef_b64: beef_b64, nonce: "A" * 200)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.status).to eq(400)
+          }
+      end
+
+      it "accepts a standard base64 nonce with padding" do
+        env = paid_request_env(beef_b64: beef_b64, nonce: "abc123AB==")
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }.not_to raise_error
+      end
+    end
+
     # §5 step 2: x-bsv-time must be within 30 seconds of server clock
     context "timestamp freshness (§5 step 2)" do
       it "accepts a timestamp within the 30s window" do
@@ -292,6 +317,19 @@ RSpec.describe X402::BSV::BRC121Gateway do
           .to raise_error(X402::VerificationError) { |e|
             expect(e.status).to eq(402)
             expect(e.reason).to include("internalisation")
+          }
+      end
+
+      it "does not leak the wallet exception message in the HTTP error" do
+        allow(wallet).to receive(:internalize_action).and_raise(
+          StandardError, "internal path /var/lib/wallets/secret.json: permission denied"
+        )
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.reason).not_to include("/var/lib")
+            expect(e.reason).not_to include("permission denied")
+            expect(e.reason).to eq("payment internalisation failed")
           }
       end
     end

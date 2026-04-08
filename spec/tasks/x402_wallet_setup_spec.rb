@@ -145,6 +145,33 @@ RSpec.describe X402::Tasks::WalletSetup do
         expect(File.read(key_path).strip).to eq(new_wif)
         expect(stdout.string).to include("FORCE=1 set — overwriting")
       end
+
+      it "enforces mode 0600 on overwrite of a previously weaker-mode file" do
+        # Simulate a file that pre-existed with weaker perms
+        File.chmod(0o644, key_path)
+        expect(File.stat(key_path).mode & 0o777).to eq(0o644)
+
+        ENV["FORCE"] = "1"
+        setup = described_class.new(
+          stdin: StringIO.new, stdout: stdout, dir: tmpdir,
+          random_wif: -> { BSV::Primitives::PrivateKey.generate.to_wif }
+        )
+        setup.run
+
+        expect(File.stat(key_path).mode & 0o777).to eq(0o600)
+      end
+    end
+  end
+
+  describe "directory permission enforcement on pre-existing dirs" do
+    it "tightens an existing directory's mode to 0700" do
+      FileUtils.chmod(0o755, tmpdir)
+      expect(File.stat(tmpdir).mode & 0o777).to eq(0o755)
+
+      setup = build_setup(choice: "1")
+      setup.run
+
+      expect(File.stat(tmpdir).mode & 0o777).to eq(0o700)
     end
   end
 end
