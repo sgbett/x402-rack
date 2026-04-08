@@ -95,6 +95,13 @@ module X402
         description: "A BSV payment is required to access this resource."
       )
       [402, headers, [body]]
+    rescue X402::VerificationError => e
+      # Gateways may surface operational failures during challenge
+      # issuance (e.g. ProofGateway raising 503 when its challenge
+      # store is saturated). Preserve the intended status rather than
+      # letting it bubble to a generic 500.
+      config.logger.warn "[x402] Challenge issuance failed: #{e.status} #{e.reason}"
+      error_response(e.status, e.reason)
     end
 
     def settle_and_forward(env, gateway, header_name, proof_payload, request, route, log)

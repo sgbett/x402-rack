@@ -134,11 +134,15 @@ module X402
       end
 
       # Atomically remove the challenge after a successful settlement.
-      # A second attempt with the same proof will miss the cache and be
-      # rejected with "challenge not found or expired", closing the
-      # same-proof replay vector without a separate txid dedup store.
+      # consume! is the replay gate: it returns false if another thread
+      # consumed the entry between our lookup_challenge! and here, in
+      # which case the other thread already succeeded and this one must
+      # lose the race. A second attempt with the same proof (whether
+      # serial or concurrent) will always see exactly one success.
       def consume_challenge!(proof)
-        @challenge_store.consume!(proof.challenge_sha256)
+        return if @challenge_store.consume!(proof.challenge_sha256)
+
+        raise VerificationError.new("challenge not found or expired", status: 400)
       end
 
       def build_merkleworks_challenge(rack_request, route)

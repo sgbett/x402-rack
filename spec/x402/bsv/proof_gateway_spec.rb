@@ -354,6 +354,30 @@ RSpec.describe X402::BSV::ProofGateway do
         .to raise_error(X402::VerificationError, /challenge not found/)
     end
 
+    it "rejects concurrent settlement of the same proof (TOCTOU race)" do
+      # Simulate two threads racing the same proof through settle!. The
+      # first to reach consume! wins; the second must see consume! return
+      # false and be rejected, so only one SettlementResult is produced.
+      # We simulate the race by pre-consuming the entry directly between
+      # the lookup and the consume in a single-threaded call — i.e. we
+      # wedge the race window open deterministically.
+      request = mock_request
+      _, proof_header = build_valid_proof(request)
+      proof = X402::Proof.from_header(proof_header)
+
+      # Grab a handle on the gateway's internal store and consume the
+      # entry out-of-band after verification would have completed.
+      store = gateway.instance_variable_get(:@challenge_store)
+      original_check_mempool = gateway.method(:check_mempool!)
+      allow(gateway).to receive(:check_mempool!) do |txid|
+        store.consume!(proof.challenge_sha256)
+        original_check_mempool.call(txid)
+      end
+
+      expect { gateway.settle!("X402-Proof", proof_header, request, route) }
+        .to raise_error(X402::VerificationError, /challenge not found/)
+    end
+
     it "rejects a forged challenge not issued by this server" do
       # Attacker crafts their own challenge with an attacker-controlled
       # nonce and computes the matching sha256. Without a corresponding
