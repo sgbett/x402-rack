@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-04-08
 
 ### Added
 
@@ -42,6 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `visible` check — Bitcoin's single-spend at the network layer
   remains the actual replay gate. Error message now surfaces the
   last observed status to aid ops debugging.
+
+### Fixed
+
+- **ProofGateway concurrent-settlement race.** `consume_challenge!`
+  previously ignored the return value of the store's atomic
+  `consume!`, allowing two threads racing the same proof to both
+  return a `SettlementResult`. Losers of the race now raise
+  `challenge not found or expired` (400), so exactly one settlement
+  succeeds per issued challenge even under concurrency.
+- **Middleware now preserves the gateway's status when challenge
+  issuance fails.** `X402::Middleware#issue_challenge` gained a
+  `VerificationError` rescue matching `settle_and_forward`, so a 503
+  from a saturated `ChallengeStore` reaches the client as 503 instead
+  of bubbling to a generic 500.
 
 ## [0.6.0] - 2026-04-05
 
