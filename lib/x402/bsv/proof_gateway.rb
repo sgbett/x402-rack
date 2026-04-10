@@ -113,7 +113,7 @@ module X402
         check_mempool!(proof.txid)
         consume_challenge!(proof)
 
-        SettlementResult.new(txid: proof.txid, network: "bsv:mainnet")
+        SettlementResult.new(txid: proof.txid, network: X402.configuration.network)
       end
 
       private

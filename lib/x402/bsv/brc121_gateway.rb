@@ -51,7 +51,6 @@ module X402
     #   settle!(header_name, proof_payload, rack_request, route) → SettlementResult
     class BRC121Gateway
       PROOF_HEADER = "x-bsv-beef"
-      NETWORK = "bsv:mainnet"
       FRESHNESS_WINDOW_MS = 30_000
       COMPRESSED_PUBKEY_HEX = /\A0[23][0-9a-f]{64}\z/
       # BRC-29 derivation prefix is base64. Cap length at 128 chars
@@ -273,7 +272,7 @@ module X402
         SettlementResult.new(
           receipt_headers: { "x-bsv-payment-satoshis-paid" => paid_sats.to_s },
           txid: transaction.txid_hex,
-          network: NETWORK
+          network: X402.configuration.network
         )
       end
 

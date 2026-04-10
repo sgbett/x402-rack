@@ -13,10 +13,9 @@ module X402
     #
     # Server broadcasts via ARC. No nonces needed — ARC is the replay gate.
     class PayGateway < Gateway
-      DEFAULT_ARC_WAIT_FOR = "SEEN_ON_NETWORK"
+      DEFAULT_ARC_WAIT_FOR = "SEEN_ON_X402.configuration.network"
       DEFAULT_ARC_TIMEOUT = 5
       DEFAULT_MAX_TIMEOUT_SECONDS = 60
-      NETWORK = "bsv:mainnet"
       ASSET = "BSV"
       SCHEME = "exact"
 
@@ -105,7 +104,7 @@ module X402
       def build_accept_entry(payee_hex, required_sats, template)
         {
           "scheme" => SCHEME,
-          "network" => NETWORK,
+          "network" => X402.configuration.network,
           "amount" => required_sats.to_s,
           "asset" => ASSET,
           "payTo" => payee_hex,
@@ -127,8 +126,8 @@ module X402
       def verify_accepted!(payload, required_sats)
         accepted = payload["accepted"]
         raise VerificationError.new("missing accepted field", status: 400) unless accepted
-        if accepted["network"] != NETWORK
-          raise VerificationError.new("network mismatch: expected #{NETWORK}", status: 400)
+        if accepted["network"] != X402.configuration.network
+          raise VerificationError.new("network mismatch: expected #{X402.configuration.network}", status: 400)
         end
 
         raw_amount = accepted["amount"]
@@ -206,11 +205,11 @@ module X402
       end
 
       def build_settlement_result(transaction)
-        receipt = { "success" => true, "transaction" => transaction.txid_hex, "network" => NETWORK }
+        receipt = { "success" => true, "transaction" => transaction.txid_hex, "network" => X402.configuration.network }
         SettlementResult.new(
           receipt_headers: { "Payment-Response" => Base64.strict_encode64(JSON.generate(receipt)) },
           txid: transaction.txid_hex,
-          network: NETWORK
+          network: X402.configuration.network
         )
       end
     end
