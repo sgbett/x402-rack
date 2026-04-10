@@ -23,6 +23,13 @@ Set up a server wallet:
 bundle exec rake x402:wallet:setup
 ```
 
+> **Rails** apps get the task automatically via the Railtie. **Non-Rails** Rack
+> apps need one line in their `Rakefile`:
+>
+> ```ruby
+> load "x402/tasks/x402.rake"
+> ```
+
 Then add the middleware:
 
 ```ruby
@@ -40,10 +47,10 @@ end
 use X402::Middleware
 ```
 
-That's it. With `wallet:` set and no explicit `enable` calls, both zero-config gateways are auto-wired:
+That's it. With `wallet:` set and no explicit `enable` calls, gateways are auto-wired based on what's configured:
 
-- **`PayGateway`** — Coinbase v2 headers (`Payment-Required` / `Payment-Signature` / `Payment-Response`)
-- **`BRC121Gateway`** — BSV Association simple 402 payments (`x-bsv-sats` / `x-bsv-server` / `x-bsv-beef` …)
+- **`BRC121Gateway`** — always enabled when `wallet:` is set (truly zero-config — no ARC needed)
+- **`PayGateway`** — also enabled when `arc_url:` (or `arc_client:`) is available
 
 Clients can pay using whichever protocol they support; the middleware dispatches on proof header.
 
@@ -56,7 +63,7 @@ Clients can pay using whichever protocol they support; the middleware dispatches
 | `BRC105Gateway` (BRC-105) | Requires BRC-103 middleware per spec; transitional HTTP-header stopgap for now | Transitional |
 | `ProofGateway` (merkleworks) | Experimental | Under development |
 
-`PayGateway` and `BRC121Gateway` are the two zero-config gateways — both work with just a wallet. `BRC105Gateway` and `ProofGateway` are opt-in via `config.enable`.
+`BRC121Gateway` is truly zero-config — it only needs a wallet. `PayGateway` is auto-enabled when `arc_url` is also set. `BRC105Gateway` and `ProofGateway` are opt-in via `config.enable`.
 
 ## Advanced configuration
 

@@ -113,13 +113,15 @@ module X402
 
         paid_sats = verify_payment_output!(subject_tx, output_index, required_sats)
 
-        internalize_payment!(
+        result = internalize_payment!(
           beef_b64: headers["x-bsv-beef"],
           output_index: output_index,
           derivation_prefix: headers["x-bsv-nonce"],
           derivation_suffix: Base64.strict_encode64(headers["x-bsv-time"]),
           sender_identity_key: headers["x-bsv-sender"]
         )
+
+        check_internalization_result!(result)
 
         log_settlement_success(subject_tx, paid_sats, required_sats)
         build_settlement_result(subject_tx, paid_sats)
@@ -153,13 +155,19 @@ module X402
       end
 
       # BRC-121 §1: "Base64-encoded BRC-29 derivation prefix for the payment."
-      # Validate format and length before passing to the wallet — an
-      # unvalidated attacker-controlled string should not reach the
-      # cryptographic derivation pipeline.
+      # Validate format, decodability, and length before passing to the
+      # wallet — an unvalidated attacker-controlled string should not reach
+      # the cryptographic derivation pipeline.
       def validate_nonce!(nonce)
-        return if nonce.match?(BASE64_NONCE)
+        # Quick reject: must look like base64 and stay under the length cap.
+        unless nonce.match?(BASE64_NONCE)
+          raise VerificationError.new("invalid x-bsv-nonce (expected base64 derivation prefix)", status: 400)
+        end
 
-        raise VerificationError.new("invalid x-bsv-nonce (expected base64 derivation prefix)", status: 400)
+        # Strict decode: reject padding errors and non-canonical encodings.
+        Base64.strict_decode64(nonce)
+      rescue ArgumentError
+        raise VerificationError.new("invalid x-bsv-nonce (not decodable as strict base64)", status: 400)
       end
 
       # §5 step 2: "If the value is not a valid number, or differs from the
@@ -241,6 +249,24 @@ module X402
         # state, storage errors) in the HTTP response body.
         logger.error "[brc121] internalize_action failed: #{e.class}: #{e.message}"
         raise VerificationError.new("payment internalisation failed", status: 402)
+      end
+
+      # §5 step 5: check the wallet's internalisation result for replay
+      # (isMerge) and acceptance. The Ruby wallet does not yet expose
+      # isMerge, but when it does this check will activate automatically.
+      def check_internalization_result!(result)
+        return unless result.is_a?(Hash)
+
+        # §5 step 5: "If isMerge is true, the transaction was already known
+        # to the wallet, indicating a replayed payment."
+        is_merge = result[:is_merge] || result["isMerge"]
+        raise VerificationError.new("replay: wallet reports transaction already internalised", status: 402) if is_merge
+
+        # Guard against a wallet that returns an explicit rejection without raising.
+        return unless result.key?(:accepted) || result.key?("accepted")
+
+        accepted = result[:accepted] || result["accepted"]
+        raise VerificationError.new("payment internalisation rejected by wallet", status: 402) unless accepted
       end
 
       def build_settlement_result(transaction, paid_sats)

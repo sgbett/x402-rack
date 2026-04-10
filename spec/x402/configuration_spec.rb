@@ -545,8 +545,28 @@ RSpec.describe X402::Configuration do
         config.payee_locking_script_hex = nil
       end
 
-      it "auto-enables PayGateway and BRC121Gateway when only wallet is set" do
+      it "auto-enables both PayGateway and BRC121Gateway when wallet and arc_url are set" do
         config.wallet = wallet
+        config.validate!
+
+        expect(config.gateways.map(&:class)).to contain_exactly(
+          X402::BSV::PayGateway,
+          X402::BSV::BRC121Gateway
+        )
+      end
+
+      it "auto-enables only BRC121Gateway when wallet is set without arc_url" do
+        config.wallet = wallet
+        config.arc_url = nil
+        config.validate!
+
+        expect(config.gateways.map(&:class)).to contain_exactly(X402::BSV::BRC121Gateway)
+      end
+
+      it "auto-enables PayGateway when arc_client is injected without arc_url" do
+        config.wallet = wallet
+        config.arc_url = nil
+        config.arc_client = arc_double
         config.validate!
 
         expect(config.gateways.map(&:class)).to contain_exactly(

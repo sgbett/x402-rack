@@ -308,17 +308,24 @@ module X402
       raise ConfigurationError, "wallet, server_wif, or payee_locking_script_hex is required"
     end
 
-    # Auto-enables +pay_gateway+ and +brc121_gateway+ when a +wallet+ has
-    # been set and the caller has not explicitly enabled any gateways.
+    # Auto-enables default gateways when a +wallet+ has been set and the
+    # caller has not explicitly enabled any gateways.
     #
-    # This is the "plug-and-play" path — configure the wallet and protected
-    # routes, and both zero-config gateways are wired up automatically.
+    # +BRC121Gateway+ only needs a wallet. +PayGateway+ additionally needs
+    # an ARC endpoint, so it is only auto-enabled when +arc_url+ or
+    # +arc_client+ is available — otherwise you'd be forced to configure
+    # ARC even if you only want BRC-121.
     def should_auto_enable_defaults?
       !@wallet.nil? && gateway_specs.empty? && (gateways.nil? || gateways.empty?)
     end
 
     def auto_enable_default_gateways!
-      DEFAULT_GATEWAYS.each { |name| enable(name) }
+      enable(:brc121_gateway)
+      enable(:pay_gateway) if arc_available?
+    end
+
+    def arc_available?
+      @arc_client || (arc_url && !arc_url.empty?)
     end
 
     def build_arc_client

@@ -34,13 +34,15 @@ The plug-and-play config:
 
 ```ruby
 X402.configure do |c|
+  c.domain = "api.example.com"
   c.wallet = X402::Wallet.load
-  c.protect path: "/api/expensive", amount_sats: 100
+  c.arc_url = "https://arc.taal.com"
+  c.protect method: :GET, path: "/api/expensive", amount_sats: 100
 end
 
 use X402::Middleware
 ```
 
-This enables `PayGateway` and `BRC121Gateway` automatically. Clients can pay via either protocol.
+`BRC121Gateway` is auto-enabled whenever `wallet:` is set. `PayGateway` is also auto-enabled when `arc_url:` is available. Clients can pay via either protocol.
 
 See the [Architecture](architecture.md) guide for how the pieces fit together, or jump to the [API Reference](reference/index.md) for class and method documentation.

@@ -201,8 +201,17 @@ RSpec.describe X402::BSV::BRC121Gateway do
       end
 
       it "accepts a standard base64 nonce with padding" do
-        env = paid_request_env(beef_b64: beef_b64, nonce: "abc123AB==")
+        env = paid_request_env(beef_b64: beef_b64, nonce: "YWJjZA==")
         expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }.not_to raise_error
+      end
+
+      it "rejects a nonce with invalid base64 padding" do
+        env = paid_request_env(beef_b64: beef_b64, nonce: "abc123AB==")
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.status).to eq(400)
+            expect(e.reason).to include("x-bsv-nonce")
+          }
       end
     end
 
@@ -331,6 +340,51 @@ RSpec.describe X402::BSV::BRC121Gateway do
             expect(e.reason).not_to include("permission denied")
             expect(e.reason).to eq("payment internalisation failed")
           }
+      end
+    end
+
+    # §5 step 5: isMerge and acceptance checking on wallet result
+    context "wallet internalization result checking (§5 step 5)" do
+      it "rejects when wallet returns isMerge: true (symbol key)" do
+        allow(wallet).to receive(:internalize_action).and_return(is_merge: true, accepted: true)
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.status).to eq(402)
+            expect(e.reason).to include("replay")
+          }
+      end
+
+      it "rejects when wallet returns isMerge: true (string key)" do
+        allow(wallet).to receive(:internalize_action).and_return("isMerge" => true, "accepted" => true)
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.status).to eq(402)
+            expect(e.reason).to include("replay")
+          }
+      end
+
+      it "rejects when wallet returns accepted: false" do
+        allow(wallet).to receive(:internalize_action).and_return(accepted: false)
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.status).to eq(402)
+            expect(e.reason).to include("rejected")
+          }
+      end
+
+      it "accepts when wallet returns accepted: true with isMerge: false" do
+        allow(wallet).to receive(:internalize_action).and_return(accepted: true, is_merge: false)
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }.not_to raise_error
+      end
+
+      it "accepts when wallet returns a non-hash result (current Ruby wallet)" do
+        allow(wallet).to receive(:internalize_action).and_return("ok")
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }.not_to raise_error
       end
     end
   end
