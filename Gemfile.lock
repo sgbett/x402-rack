@@ -15,10 +15,10 @@ GEM
       public_suffix (>= 2.0.2, < 8.0)
     ast (2.4.3)
     base64 (0.3.0)
-    bsv-sdk (0.7.0)
-    bsv-wallet (0.3.3)
+    bsv-sdk (0.9.0)
+    bsv-wallet (0.4.0)
       base64 (~> 0.2)
-      bsv-sdk (~> 0.4)
+      bsv-sdk (>= 0.9.0, < 1.0)
     capybara (3.40.0)
       addressable
       matrix
