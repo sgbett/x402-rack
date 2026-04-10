@@ -143,6 +143,66 @@ RSpec.describe X402::Configuration do
       expect { config.validate! }.to raise_error(X402::ConfigurationError, /domain/)
     end
 
+    context "network" do
+      around do |example|
+        original = ENV.fetch("BSV_NETWORK", nil)
+        ENV.delete("BSV_NETWORK")
+        example.run
+        ENV["BSV_NETWORK"] = original if original
+      end
+
+      it "defaults to bsv:mainnet" do
+        valid_config(config)
+        config.validate!
+        expect(config.network).to eq("bsv:mainnet")
+      end
+
+      it "accepts an explicit network override" do
+        valid_config(config)
+        config.network = "bsv:testnet"
+        config.validate!
+        expect(config.network).to eq("bsv:testnet")
+      end
+
+      it "respects BSV_NETWORK env var when network is not explicitly set" do
+        ENV["BSV_NETWORK"] = "bsv:testnet"
+        valid_config(config)
+        config.validate!
+        expect(config.network).to eq("bsv:testnet")
+      end
+
+      it "explicit config.network wins over BSV_NETWORK env var" do
+        ENV["BSV_NETWORK"] = "bsv:testnet"
+        valid_config(config)
+        config.network = "bsv:mainnet"
+        config.validate!
+        expect(config.network).to eq("bsv:mainnet")
+      end
+
+      it "raises on invalid network" do
+        valid_config(config)
+        config.network = "bsv:bogus"
+        expect { config.validate! }.to raise_error(
+          X402::ConfigurationError, /invalid network.*bsv:bogus.*bsv:mainnet, bsv:testnet/
+        )
+      end
+
+      it "raises on invalid BSV_NETWORK env var" do
+        ENV["BSV_NETWORK"] = "ethereum"
+        valid_config(config)
+        expect { config.validate! }.to raise_error(
+          X402::ConfigurationError, /invalid network.*ethereum/
+        )
+      end
+
+      it "treats blank BSV_NETWORK as unset (falls back to default)" do
+        ENV["BSV_NETWORK"] = ""
+        valid_config(config)
+        config.validate!
+        expect(config.network).to eq("bsv:mainnet")
+      end
+    end
+
     it "raises when neither wallet, server_wif nor payee_locking_script_hex is set" do
       config.domain = "example.com"
       config.gateways = [mock_gateway]

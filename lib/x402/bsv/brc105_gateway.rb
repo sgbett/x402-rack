@@ -21,7 +21,6 @@ module X402
     class BRC105Gateway
       PROTOCOL_ID = [2, "3241645161d8"].freeze
       PROOF_HEADER = "x-bsv-payment"
-      NETWORK = "bsv:mainnet"
       COMPRESSED_PUBKEY_HEX = /\A0[23][0-9a-f]{64}\z/
       MAX_DERIVATION_BYTES = 64
       PRINTABLE_ASCII = /\A[\x20-\x7E]+\z/
@@ -243,7 +242,7 @@ module X402
         receipt = {
           "success" => true,
           "transaction" => transaction.txid_hex,
-          "network" => NETWORK
+          "network" => X402.configuration.network
         }
         SettlementResult.new(
           receipt_headers: {
@@ -251,7 +250,7 @@ module X402
             "x-bsv-payment-result" => Base64.strict_encode64(JSON.generate(receipt))
           },
           txid: transaction.txid_hex,
-          network: NETWORK
+          network: X402.configuration.network
         )
       end
     end

@@ -55,11 +55,14 @@ module X402
     # with a BRC-100 wallet and expose non-overlapping proof headers.
     DEFAULT_GATEWAYS = %i[pay_gateway brc121_gateway].freeze
 
+    VALID_NETWORKS = %w[bsv:mainnet bsv:testnet].freeze
+    DEFAULT_NETWORK = "bsv:mainnet"
+
     attr_accessor :domain, :payee_locking_script_hex, :gateways,
                   :arc_url, :arc_api_key, :arc_client, :server_wif, :wallet,
                   :exchange_rate_provider, :logger,
                   :status_endpoint_path, :status_endpoint_token
-    attr_reader :routes, :gateway_specs
+    attr_reader :routes, :gateway_specs, :network
 
     DEFAULT_STATUS_ENDPOINT_PATH = "/_x402/status"
 
@@ -67,6 +70,7 @@ module X402
       @routes = []
       @gateways = []
       @gateway_specs = []
+      @network = DEFAULT_NETWORK
       @logger = default_logger
       @status_endpoint_enabled = false
       @status_endpoint_path = DEFAULT_STATUS_ENDPOINT_PATH
@@ -91,6 +95,14 @@ module X402
     # @return [Boolean] whether the status endpoint should be served
     def status_endpoint_enabled?
       @status_endpoint_enabled
+    end
+
+    # Set the BSV network explicitly.
+    #
+    # @param value [String] e.g. "bsv:mainnet" or "bsv:testnet"
+    def network=(value)
+      @network = value
+      @network_explicit = true
     end
 
     private
@@ -189,6 +201,7 @@ module X402
     def validate!
       raise ConfigurationError, "domain is required" if domain.nil? || domain.empty?
 
+      resolve_network!
       validate_payee_source!
       auto_enable_default_gateways! if should_auto_enable_defaults?
       build_gateways_from_specs! if gateways.empty? && !gateway_specs.empty?
@@ -199,6 +212,32 @@ module X402
     end
 
     private
+
+    # Resolve the network identifier.
+    #
+    # Resolution order:
+    #   1. Explicit +config.network =+ (wins if set)
+    #   2. +BSV_NETWORK+ environment variable
+    #   3. +DEFAULT_NETWORK+ ("bsv:mainnet")
+    #
+    # Blank or empty values at any level are treated as unset and fall
+    # through to the next source.
+    def resolve_network!
+      @network = resolve_network_value
+      return if VALID_NETWORKS.include?(@network)
+
+      raise ConfigurationError,
+            "invalid network #{@network.inspect} — must be one of: #{VALID_NETWORKS.join(", ")}"
+    end
+
+    def resolve_network_value
+      return @network if @network_explicit && @network.is_a?(String) && !@network.empty?
+
+      env_val = ENV.fetch("BSV_NETWORK", nil)
+      return env_val if env_val.is_a?(String) && !env_val.empty?
+
+      DEFAULT_NETWORK
+    end
 
     # Resolve and announce the status endpoint token. Auto-generates a
     # random token if none was provided so the endpoint is always
