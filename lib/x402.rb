@@ -4,9 +4,11 @@ require_relative "x402/version"
 require_relative "x402/errors"
 require_relative "x402/settlement_result"
 require_relative "x402/configuration"
+require_relative "x402/wallet"
 require_relative "x402/middleware"
 require_relative "x402/payment_observer"
 require_relative "x402/settlement_worker"
+require_relative "x402/railtie" if defined?(Rails::Railtie)
 
 module X402
   class << self

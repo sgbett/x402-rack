@@ -19,6 +19,8 @@ require "rubocop/rake_task"
 
 RuboCop::RakeTask.new
 
+Dir.glob("lib/tasks/*.rake").each { |f| load f }
+
 task default: %i[spec rubocop]
 
 def generate_reference_index(output_dir)

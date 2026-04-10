@@ -2,7 +2,7 @@
 
 ## x402 Implementations
 
-Three x402 ecosystems exist with different conventions. Our middleware supports all of them via the multi-gateway dispatch model.
+Four BSV payment schemes are supported via the multi-gateway dispatch model.
 
 ### Coinbase x402 v2 (broad ecosystem)
 
@@ -12,7 +12,24 @@ Three x402 ecosystems exist with different conventions. Our middleware supports 
 - **Request binding**: resource URL only (no method/path/query hash)
 - **Multi-chain**: `accepts` array for multi-chain/multi-scheme negotiation
 - **Spec**: https://docs.x402.org
-- **Our PR**: https://github.com/coinbase/x402/pull/1844 (BSV scheme spec)
+- **Our PR**: https://github.com/x402-foundation/x402/pull/1844 (BSV scheme spec)
+
+### BRC-121 (Simple 402 Payments)
+
+- **Headers**: `x-bsv-sats` / `x-bsv-server` / `x-bsv-beef` / `x-bsv-sender` / `x-bsv-nonce` / `x-bsv-time` / `x-bsv-vout`
+- **Flow**: stateless; client builds BRC-29 payment in one round trip with a timestamp-suffixed derivation
+- **Replay protection**: 30s timestamp freshness window + wallet `isMerge` (or `TxidStore` fallback in Ruby)
+- **Identity**: no BRC-103 required; client identity is carried in the `x-bsv-sender` header and used as the BRC-29 counterparty
+- **Spec**: https://github.com/bitcoin-sv/BRCs/blob/master/payments/0121.md
+
+### BRC-105 (HTTP Service Monetization Framework)
+
+- **Headers**: `x-bsv-payment-version` / `x-bsv-payment-satoshis-required` / `x-bsv-payment-derivation-prefix` / `x-bsv-payment`
+- **Flow**: authenticated (BRC-103/104) payment with server-generated derivation prefix
+- **Replay protection**: server-tracked derivation prefixes (PrefixStore)
+- **Identity**: **requires** BRC-103 mutual authentication per spec §3/§5.1/§7.1
+- **Status**: transitional in x402-rack — accepts the client identity key via HTTP header as a stopgap until Ruby BRC-103 middleware lands
+- **Spec**: https://github.com/bitcoin-sv/BRCs/blob/master/payments/0105.md
 
 ### Merkleworks x402 (BSV-specific)
 
@@ -20,16 +37,9 @@ Three x402 ecosystems exist with different conventions. Our middleware supports 
 - **Flow**: client broadcasts → server checks mempool (proof-of-payment)
 - **Replay protection**: 1-sat nonce UTXO (single-spend at consensus layer)
 - **Request binding**: strong (method, path, query, headers hash, body hash)
+- **Status**: experimental
 - **Spec**: https://github.com/ruidasilva/merkleworks-x402-spec
 - **Reference impl**: https://github.com/merkleworks/x402-bsv
-
-### BRC-105 (BSV Association BRC)
-
-- **Headers**: `x-bsv-payment-version` / `x-bsv-payment-satoshis-required` / `x-bsv-payment-derivation-prefix` / `x-bsv-payment`
-- **Flow**: authenticated (BRC-103/104) payment with derivation-based unique addresses
-- **Replay protection**: server-tracked derivation prefixes (server-side state)
-- **Identity**: requires BRC-103 mutual authentication (but could work without — see below)
-- **Spec**: https://github.com/bitcoin-sv/BRCs/blob/master/payments/0105.md
 
 ## Header Namespace Reservations
 
@@ -37,41 +47,22 @@ Three x402 ecosystems exist with different conventions. Our middleware supports 
 |-----------|-----------|
 | `Payment-*` | Coinbase v2 / our PayGateway |
 | `X402-*` | Merkleworks / our ProofGateway |
-| `x-bsv-*` | BRC-105 / BSV Association |
+| `x-bsv-payment-*` | BRC-105 / BSV Association |
+| `x-bsv-sats`, `x-bsv-server`, `x-bsv-beef`, `x-bsv-sender`, `x-bsv-nonce`, `x-bsv-time`, `x-bsv-vout` | BRC-121 / BSV Association |
 
-These namespaces must not overlap. When designing new headers or gateway types, check which namespace the target ecosystem uses.
+These namespaces must not overlap. When designing new headers or gateway types, check which namespace the target ecosystem uses. Note that BRC-105 and BRC-121 both use the `x-bsv-*` prefix but with disjoint header sets — they can coexist on the same server.
 
 ## Our Position
 
-Our PayGateway implements the Coinbase v2 header spec with BSV as the settlement network. This makes BSV a first-class citizen in the broader x402 ecosystem — any Coinbase-compatible server or client can interoperate with us.
+**PayGateway** implements the Coinbase v2 header spec with BSV as the settlement network — BSV as a first-class citizen in the broader x402 ecosystem.
 
-We also support merkleworks via a separate ProofGateway that uses the `X402-*` headers.
+**BRC121Gateway** implements the BSV Association's simple HTTP payment protocol — stateless, BRC-100 wallet-native, zero config. The most direct path to a working BSV-native x402 server.
 
-Our BRC105Gateway implements the BSV Association's native payment protocol using `x-bsv-*` headers, enabling interoperability with BRC-100 wallets and the broader BSV ecosystem tooling.
+**BRC105Gateway** implements the BSV Association's authenticated payment protocol — requires BRC-103 middleware per spec. Transitional in x402-rack today; clients that send `x-bsv-auth-identity-key` as an HTTP header work via a documented stopgap until a Ruby BRC-103 middleware lands.
 
-Coinbase will likely gatekeep BSV from their ecosystem — our conformance is about making it easy for others to integrate BSV as a supported network.
+**ProofGateway** implements merkleworks x402 — experimental; kept for compatibility with the merkleworks ecosystem.
 
-## BRC-105: Standalone and Authenticated Modes
-
-BRC-105 assumes BRC-103/104 mutual authentication, but `BRC105Gateway` supports both modes:
-
-### Standalone mode (no BRC-103)
-
-The gateway advertises its identity key in the `x-bsv-payment-identity-key` challenge header. The client uses this for BRC-29 key derivation. Counterparty is `"anyone"` — anonymous payments similar to PayGateway but using BSV-native headers.
-
-- No handshake required
-- Transport security handled by TLS
-- Replay protection via server-tracked derivation prefixes
-
-### Authenticated mode (with BRC-103 middleware)
-
-When BRC-103 middleware is present upstream in the Rack stack, the gateway reads the client's authenticated identity key from `env['brc103.identity_key']` and uses it as the BRC-29 derivation counterparty. The identity key challenge header is omitted (the client already has the server's key from the BRC-103 handshake).
-
-- Full BRC-105 compliance
-- Payment bound to authenticated identity
-- Stronger replay protection (session nonces + prefix tracking)
-
-The gateway detects the mode automatically — no configuration change required. This allows composing `BRC103Middleware + BRC105Gateway` for the full authenticated flow, or using `BRC105Gateway` alone for the simpler anonymous path.
+PayGateway and BRC121Gateway are auto-enabled when you set `config.wallet = ...`. The other two are opt-in via `config.enable :brc105_gateway` or `:proof_gateway`.
 
 ## Related Projects
 

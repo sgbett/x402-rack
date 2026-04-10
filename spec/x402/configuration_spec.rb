@@ -143,11 +143,12 @@ RSpec.describe X402::Configuration do
       expect { config.validate! }.to raise_error(X402::ConfigurationError, /domain/)
     end
 
-    it "raises when neither server_wif nor payee_locking_script_hex is set" do
+    it "raises when neither wallet, server_wif nor payee_locking_script_hex is set" do
       config.domain = "example.com"
       config.gateways = [mock_gateway]
       config.protect(method: "GET", path: "/", amount_sats: 1)
-      expect { config.validate! }.to raise_error(X402::ConfigurationError, /server_wif or payee_locking_script_hex/)
+      expect { config.validate! }.to raise_error(X402::ConfigurationError,
+                                                 /wallet, server_wif, or payee_locking_script_hex/)
     end
 
     it "succeeds with server_wif instead of payee_locking_script_hex" do
@@ -253,6 +254,11 @@ RSpec.describe X402::Configuration do
     it "records a BRC105Gateway spec with options" do
       config.enable :brc105_gateway, server_wif: "L3test"
       expect(config.gateway_specs.first).to eq(["X402::BSV::BRC105Gateway", { server_wif: "L3test" }])
+    end
+
+    it "records a BRC121Gateway spec" do
+      config.enable :brc121_gateway
+      expect(config.gateway_specs.first).to eq(["X402::BSV::BRC121Gateway", {}])
     end
 
     it "raises for unknown gateway names" do
@@ -473,6 +479,133 @@ RSpec.describe X402::Configuration do
         expect { config.validate! }.to raise_error(
           X402::ConfigurationError, /brc105_gateway: unknown option.*:bad_opt/
         )
+      end
+    end
+
+    context "BRC121Gateway" do
+      let(:wallet) do
+        double("wallet", internalize_action: { accepted: true }, get_public_key: { public_key: "02#{"ab" * 32}" })
+      end
+
+      it "builds with top-level config.wallet" do
+        config.wallet = wallet
+        config.enable :brc121_gateway
+        config.validate!
+
+        expect(config.gateways.first).to be_a(X402::BSV::BRC121Gateway)
+      end
+
+      it "builds with per-gateway wallet override" do
+        alt_wallet = double("alt_wallet", internalize_action: { accepted: true },
+                                          get_public_key: { public_key: "03#{"cd" * 32}" })
+        config.wallet = wallet
+        config.enable :brc121_gateway, wallet: alt_wallet
+        config.validate!
+
+        expect(config.gateways.first).to be_a(X402::BSV::BRC121Gateway)
+      end
+
+      it "accepts an explicit txid_store" do
+        custom_store = X402::BSV::TxidStore::Memory.new(ttl: 120)
+        config.wallet = wallet
+        config.enable :brc121_gateway, txid_store: custom_store
+        config.validate!
+
+        expect(config.gateways.first).to be_a(X402::BSV::BRC121Gateway)
+      end
+
+      it "raises when no wallet is provided" do
+        config.enable :brc121_gateway
+        expect { config.validate! }.to raise_error(
+          X402::ConfigurationError, /brc121_gateway requires wallet/
+        )
+      end
+
+      it "raises on unknown options" do
+        config.wallet = wallet
+        config.enable :brc121_gateway, bad_opt: true
+        expect { config.validate! }.to raise_error(
+          X402::ConfigurationError, /brc121_gateway: unknown option.*:bad_opt/
+        )
+      end
+    end
+
+    context "auto-enable default gateways (plug-and-play)" do
+      let(:wallet) do
+        w = double("wallet")
+        allow(w).to receive(:get_public_key).with(identity_key: true).and_return(public_key: "02#{"ab" * 32}")
+        allow(w).to receive(:internalize_action).and_return(accepted: true)
+        allow(w).to receive(:key_deriver).and_return(double(identity_key: "02#{"ab" * 32}"))
+        w
+      end
+
+      before do
+        # Override the default setup — remove payee_locking_script_hex so
+        # wallet is the only payee source (pure plug-and-play path).
+        config.payee_locking_script_hex = nil
+      end
+
+      it "auto-enables both PayGateway and BRC121Gateway when wallet and arc_url are set" do
+        config.wallet = wallet
+        config.validate!
+
+        expect(config.gateways.map(&:class)).to contain_exactly(
+          X402::BSV::PayGateway,
+          X402::BSV::BRC121Gateway
+        )
+      end
+
+      it "auto-enables only BRC121Gateway when wallet is set without arc_url" do
+        config.wallet = wallet
+        config.arc_url = nil
+        config.validate!
+
+        expect(config.gateways.map(&:class)).to contain_exactly(X402::BSV::BRC121Gateway)
+      end
+
+      it "auto-enables PayGateway when arc_client is injected without arc_url" do
+        config.wallet = wallet
+        config.arc_url = nil
+        config.arc_client = arc_double
+        config.validate!
+
+        expect(config.gateways.map(&:class)).to contain_exactly(
+          X402::BSV::PayGateway,
+          X402::BSV::BRC121Gateway
+        )
+      end
+
+      it "does not auto-enable when an explicit enable call was made" do
+        config.wallet = wallet
+        config.enable :brc121_gateway
+        config.validate!
+
+        expect(config.gateways.map(&:class)).to contain_exactly(X402::BSV::BRC121Gateway)
+      end
+
+      it "does not auto-enable when gateways= array is set" do
+        config.wallet = wallet
+        config.gateways = [mock_gateway]
+        config.validate!
+
+        expect(config.gateways).to eq([mock_gateway])
+      end
+
+      it "does not auto-enable when only server_wif is set (backwards compat)" do
+        config.server_wif = "L3server"
+        config.payee_locking_script_hex = "76a914aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa88ac"
+        config.gateways = [mock_gateway]
+        config.validate!
+
+        expect(config.gateways).to eq([mock_gateway])
+      end
+
+      it "passes the shared wallet to the auto-enabled BRC121Gateway" do
+        config.wallet = wallet
+        config.validate!
+
+        brc121 = config.gateways.find { |g| g.is_a?(X402::BSV::BRC121Gateway) }
+        expect(brc121).not_to be_nil
       end
     end
 
