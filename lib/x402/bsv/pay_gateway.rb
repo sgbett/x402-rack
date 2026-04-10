@@ -13,7 +13,7 @@ module X402
     #
     # Server broadcasts via ARC. No nonces needed — ARC is the replay gate.
     class PayGateway < Gateway
-      DEFAULT_ARC_WAIT_FOR = "SEEN_ON_X402.configuration.network"
+      DEFAULT_ARC_WAIT_FOR = "SEEN_ON_NETWORK"
       DEFAULT_ARC_TIMEOUT = 5
       DEFAULT_MAX_TIMEOUT_SECONDS = 60
       ASSET = "BSV"
