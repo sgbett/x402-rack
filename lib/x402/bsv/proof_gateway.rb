@@ -206,8 +206,10 @@ module X402
       end
 
       def decode_transaction(proof)
-        raw = Base64.decode64(proof.rawtx_b64)
+        raw = Base64.strict_decode64(proof.rawtx_b64)
         ::BSV::Transaction::Transaction.from_binary(raw)
+      rescue ArgumentError
+        raise VerificationError, "invalid base64 in transaction"
       rescue VerificationError
         raise
       rescue StandardError
