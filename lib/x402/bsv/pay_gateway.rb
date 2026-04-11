@@ -169,9 +169,9 @@ module X402
       end
 
       def verify_binding!(transaction, rack_request)
-        expected_hex = "006a047834303220#{request_binding_hash(rack_request).unpack1("H*")}"
+        expected_script = build_op_return_script(request_binding_hash(rack_request))
         found = transaction.outputs.any? do |output|
-          output.locking_script.op_return? && output.locking_script.to_hex == expected_hex
+          output.locking_script.op_return? && output.locking_script.to_hex == expected_script.to_hex
         end
 
         return if found
