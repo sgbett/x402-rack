@@ -203,12 +203,12 @@ RSpec.describe X402::Configuration do
       end
     end
 
-    it "raises when neither wallet, server_wif nor payee_locking_script_hex is set" do
+    it "raises when neither wallet, server_wif, operator_wallet_url nor payee_locking_script_hex is set" do
       config.domain = "example.com"
       config.gateways = [mock_gateway]
       config.protect(method: "GET", path: "/", amount_sats: 1)
       expect { config.validate! }.to raise_error(X402::ConfigurationError,
-                                                 /wallet, server_wif, or payee_locking_script_hex/)
+                                                 /wallet, server_wif, operator_wallet_url, or payee_locking_script_hex/)
     end
 
     it "succeeds with server_wif instead of payee_locking_script_hex" do
@@ -518,6 +518,9 @@ RSpec.describe X402::Configuration do
     context "BRC105Gateway" do
       let(:private_key) { instance_double("BSV::Primitives::PrivateKey") }
       let(:key_deriver) { instance_double("BSV::Wallet::KeyDeriver") }
+      let(:brc105_wallet) { double("wallet", internalize_action: { accepted: true }) }
+
+      before { config.wallet = brc105_wallet }
 
       it "builds with server_wif convenience" do
         allow(BSV::Primitives::PrivateKey).to receive(:from_wif)
@@ -551,6 +554,16 @@ RSpec.describe X402::Configuration do
         expect(config.gateways.first).to be_a(X402::BSV::BRC105Gateway)
       end
 
+      it "builds with per-gateway wallet override" do
+        alt_wallet = double("alt_wallet", internalize_action: { accepted: true })
+        config.enable :brc105_gateway, key_deriver: key_deriver, wallet: alt_wallet
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw).to be_a(X402::BSV::BRC105Gateway)
+        expect(gw.instance_variable_get(:@wallet)).to eq(alt_wallet)
+      end
+
       it "defaults prefix_store to PrefixStore::Memory" do
         config.enable :brc105_gateway, key_deriver: key_deriver
         config.validate!
@@ -563,6 +576,15 @@ RSpec.describe X402::Configuration do
         config.enable :brc105_gateway
         expect { config.validate! }.to raise_error(
           X402::ConfigurationError, /brc105_gateway requires one of/
+        )
+      end
+
+      it "raises when no wallet is provided" do
+        config.wallet = nil
+        config.payee_locking_script_hex = "76a914..."
+        config.enable :brc105_gateway, key_deriver: key_deriver
+        expect { config.validate! }.to raise_error(
+          X402::ConfigurationError, /brc105_gateway requires wallet/
         )
       end
 
@@ -905,6 +927,103 @@ RSpec.describe X402::Configuration do
 
         expect(X402.configuration.gateways.size).to eq(1)
         expect(X402.configuration.gateways.first).to be_a(X402::BSV::PayGateway)
+      end
+    end
+
+    context "operator_wallet_url" do
+      let(:remote_wallet) { instance_double("X402::RemoteWallet") }
+
+      before do
+        config.payee_locking_script_hex = nil
+        allow(X402::RemoteWallet).to receive(:new)
+          .with(url: "https://wallet.example.com/api")
+          .and_return(remote_wallet)
+        allow(remote_wallet).to receive(:get_public_key)
+          .with(identity_key: true)
+          .and_return(public_key: "02#{"ab" * 32}")
+        allow(remote_wallet).to receive(:internalize_action)
+          .and_return(accepted: true)
+      end
+
+      it "auto-constructs a RemoteWallet as the shared wallet" do
+        config.operator_wallet_url = "https://wallet.example.com/api"
+        config.gateways = [mock_gateway]
+        config.validate!
+
+        expect(config.shared_wallet).to eq(remote_wallet)
+        expect(X402::RemoteWallet).to have_received(:new).with(url: "https://wallet.example.com/api")
+      end
+
+      it "enables PayGateway and BRC121Gateway auto-enable" do
+        config.operator_wallet_url = "https://wallet.example.com/api"
+        config.validate!
+
+        expect(config.gateways.map(&:class)).to contain_exactly(
+          X402::BSV::PayGateway,
+          X402::BSV::BRC121Gateway
+        )
+      end
+
+      it "raises when both operator_wallet_url and wallet are set" do
+        config.operator_wallet_url = "https://wallet.example.com/api"
+        config.wallet = remote_wallet
+        config.gateways = [mock_gateway]
+        config.protect(method: "GET", path: "/", amount_sats: 1)
+
+        expect { config.validate! }.to raise_error(
+          X402::ConfigurationError, /operator_wallet_url and wallet are mutually exclusive/
+        )
+      end
+
+      it "raises when both operator_wallet_url and server_wif are set" do
+        config.operator_wallet_url = "https://wallet.example.com/api"
+        config.server_wif = "L1serverWif"
+        config.gateways = [mock_gateway]
+        config.protect(method: "GET", path: "/", amount_sats: 1)
+
+        expect { config.validate! }.to raise_error(
+          X402::ConfigurationError, /operator_wallet_url and server_wif are mutually exclusive/
+        )
+      end
+
+      it "accepts operator_wallet_url as a valid payee source" do
+        config.operator_wallet_url = "https://wallet.example.com/api"
+        config.gateways = [mock_gateway]
+        config.protect(method: "GET", path: "/", amount_sats: 1)
+
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "validates with just domain + operator_wallet_url + protect (minimal config)" do
+        config.operator_wallet_url = "https://wallet.example.com/api"
+        config.protect(method: "GET", path: "/api/data", amount_sats: 100)
+
+        config.validate!
+
+        expect(config.shared_wallet).to eq(remote_wallet)
+        expect(config.gateways).not_to be_empty
+      end
+
+      it "treats empty string operator_wallet_url as unset" do
+        config.operator_wallet_url = ""
+        config.payee_locking_script_hex = "76a914..."
+        config.gateways = [mock_gateway]
+        config.protect(method: "GET", path: "/", amount_sats: 1)
+
+        config.validate!
+
+        expect(X402::RemoteWallet).not_to have_received(:new)
+      end
+
+      it "treats nil operator_wallet_url as unset" do
+        config.operator_wallet_url = nil
+        config.payee_locking_script_hex = "76a914..."
+        config.gateways = [mock_gateway]
+        config.protect(method: "GET", path: "/", amount_sats: 1)
+
+        config.validate!
+
+        expect(X402::RemoteWallet).not_to have_received(:new)
       end
     end
   end

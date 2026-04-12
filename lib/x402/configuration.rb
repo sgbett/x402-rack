@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "securerandom"
+require_relative "remote_wallet"
 
 module X402
   # DSL for configuring X402 middleware, gateways, and protected routes.
@@ -60,7 +61,7 @@ module X402
 
     attr_accessor :domain, :payee_locking_script_hex, :gateways,
                   :arc_url, :arc_api_key, :arc_client, :server_wif, :wallet,
-                  :exchange_rate_provider, :logger,
+                  :operator_wallet_url, :exchange_rate_provider, :logger,
                   :status_endpoint_path, :status_endpoint_token
     attr_reader :routes, :gateway_specs, :network
 
@@ -146,11 +147,12 @@ module X402
     #
     # Resolution order:
     #   1. An explicitly-set +@wallet+ (any BRC-100 compatible wallet,
-    #      typically a +BSV::Wallet::WalletClient+)
+    #      typically a +BSV::Wallet::WalletClient+), or a +RemoteWallet+
+    #      auto-constructed from +operator_wallet_url+
     #   2. A +ProtoWallet+ built from +server_wif+ (backwards compat)
     #   3. +nil+ if neither is set
     #
-    # @return [BSV::Wallet::ProtoWallet, BSV::Wallet::WalletClient, nil]
+    # @return [BSV::Wallet::ProtoWallet, BSV::Wallet::WalletClient, RemoteWallet, nil]
     def shared_wallet
       return @wallet if @wallet
       return if @server_wif.nil? || @server_wif.empty?
@@ -202,6 +204,7 @@ module X402
       raise ConfigurationError, "domain is required" if domain.nil? || domain.empty?
 
       resolve_network!
+      resolve_operator_wallet!
       validate_payee_source!
       auto_enable_default_gateways! if should_auto_enable_defaults?
       build_gateways_from_specs! if gateways.empty? && !gateway_specs.empty?
@@ -237,6 +240,36 @@ module X402
       return env_val if env_val.is_a?(String) && !env_val.empty?
 
       DEFAULT_NETWORK
+    end
+
+    # Construct a RemoteWallet from +operator_wallet_url+ when set.
+    #
+    # Mutually exclusive with +wallet+ and +server_wif+ — raises
+    # ConfigurationError if more than one wallet source is provided.
+    def resolve_operator_wallet!
+      return unless operator_wallet_url_present?
+
+      validate_wallet_source_exclusivity!
+      @wallet = RemoteWallet.new(url: @operator_wallet_url)
+    end
+
+    def validate_wallet_source_exclusivity!
+      has_wallet = !@wallet.nil?
+      has_server_wif = @server_wif && !@server_wif.empty?
+
+      if has_wallet
+        raise ConfigurationError,
+              "operator_wallet_url and wallet are mutually exclusive — provide only one"
+      end
+
+      return unless has_server_wif
+
+      raise ConfigurationError,
+            "operator_wallet_url and server_wif are mutually exclusive — provide only one"
+    end
+
+    def operator_wallet_url_present?
+      @operator_wallet_url.is_a?(String) && !@operator_wallet_url.empty?
     end
 
     # Resolve and announce the status endpoint token. Auto-generates a
@@ -341,10 +374,11 @@ module X402
       has_payee = payee_locking_script_hex && !payee_locking_script_hex.empty?
       has_server_wif = @server_wif && !@server_wif.empty?
       has_wallet = !@wallet.nil?
+      has_operator_url = operator_wallet_url_present?
 
-      return if has_payee || has_server_wif || has_wallet
+      return if has_payee || has_server_wif || has_wallet || has_operator_url
 
-      raise ConfigurationError, "wallet, server_wif, or payee_locking_script_hex is required"
+      raise ConfigurationError, "wallet, server_wif, operator_wallet_url, or payee_locking_script_hex is required"
     end
 
     # Auto-enables default gateways when a +wallet+ has been set and the
@@ -446,10 +480,16 @@ module X402
               "brc105_gateway requires one of: key_deriver:, server_wif:, server_key:, or top-level server_wif"
       end
 
+      wallet = options[:wallet] || shared_wallet
+      unless wallet
+        raise ConfigurationError,
+              "brc105_gateway requires wallet: (or top-level config.wallet = / config.server_wif =)"
+      end
+
       klass.new(
         key_deriver: key_deriver,
         prefix_store: options[:prefix_store] || X402::BSV::PrefixStore::Memory.new,
-        arc_client: options[:arc_client] || shared_arc_client
+        wallet: wallet
       )
     end
 
