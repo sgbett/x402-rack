@@ -231,6 +231,26 @@ RSpec.describe X402::RemoteWallet do
       expect(captured_body["outputIndex"]).to eq(0)
     end
 
+    it "accepts a positional Hash (ProtoWallet convention)" do
+      result = wallet.internalize_action({
+                                           tx: tx_bytes,
+                                           outputs: [{
+                                             output_index: 0,
+                                             protocol: "wallet payment",
+                                             payment_remittance: {
+                                               derivation_prefix: "cHJlZml4",
+                                               derivation_suffix: "c3VmZml4",
+                                               sender_identity_key: sender_key
+                                             }
+                                           }],
+                                           description: "BRC-121 payment"
+                                         })
+
+      expect(result).to eq("accepted" => true)
+      expect(captured_body["tx"]).to eq(tx_bytes)
+      expect(captured_body["senderIdentityKey"]).to eq(sender_key)
+    end
+
     context "when outputs is empty" do
       it "posts with nil derivation fields" do
         result = wallet.internalize_action(tx: tx_bytes, outputs: [], description: "test")

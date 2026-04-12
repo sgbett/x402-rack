@@ -203,19 +203,19 @@ module X402
       def internalize_payment!(transaction_b64:, output_index:, derivation_prefix:, derivation_suffix:,
                                sender_identity_key:)
         tx_bytes = Base64.strict_decode64(transaction_b64).unpack("C*")
-        @wallet.internalize_action(
-          tx: tx_bytes,
-          outputs: [{
-            output_index: output_index,
-            protocol: PROTOCOL,
-            payment_remittance: {
-              derivation_prefix: derivation_prefix,
-              derivation_suffix: derivation_suffix,
-              sender_identity_key: sender_identity_key
-            }
-          }],
-          description: "BRC-105 payment"
-        )
+        @wallet.internalize_action({
+                                     tx: tx_bytes,
+                                     outputs: [{
+                                       output_index: output_index,
+                                       protocol: PROTOCOL,
+                                       payment_remittance: {
+                                         derivation_prefix: derivation_prefix,
+                                         derivation_suffix: derivation_suffix,
+                                         sender_identity_key: sender_identity_key
+                                       }
+                                     }],
+                                     description: "BRC-105 payment"
+                                   })
       rescue VerificationError
         raise
       rescue StandardError => e

@@ -216,19 +216,19 @@ RSpec.describe X402::BSV::BRC105Gateway do
 
         real_gateway.settle!("x-bsv-payment", payload, request, route)
 
-        expect(wallet).to have_received(:internalize_action).with(
-          tx: an_instance_of(Array),
-          outputs: [hash_including(
-            output_index: 0,
-            protocol: "wallet payment",
-            payment_remittance: {
-              derivation_prefix: prefix,
-              derivation_suffix: suffix,
-              sender_identity_key: client_identity_key
-            }
-          )],
-          description: "BRC-105 payment"
-        )
+        expect(wallet).to have_received(:internalize_action).with(hash_including(
+                                                                    tx: an_instance_of(Array),
+                                                                    outputs: [hash_including(
+                                                                      output_index: 0,
+                                                                      protocol: "wallet payment",
+                                                                      payment_remittance: {
+                                                                        derivation_prefix: prefix,
+                                                                        derivation_suffix: suffix,
+                                                                        sender_identity_key: client_identity_key
+                                                                      }
+                                                                    )],
+                                                                    description: "BRC-105 payment"
+                                                                  ))
       end
     end
 
