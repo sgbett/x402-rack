@@ -152,17 +152,18 @@ RSpec.describe X402::RemoteWallet do
   # ---------------------------------------------------------------------------
   describe "#get_public_key with derivation params" do
     before do
-      server_responses["request"] = lambda { |req|
-        expect(req.query["protocolId"]).to eq("2,x402 payment")
-        expect(req.query["keyId"]).to be_a(String)
+      server_responses["getPublicKey"] = lambda { |req|
+        params = URI.decode_www_form(req.query_string || "").to_h
+        expect(params["protocolId"]).to eq("2,3241645161d8")
+        expect(params["keyId"]).to be_a(String)
         [200, { "publicKey" => derived_key }]
       }
     end
 
     it "returns the derived key" do
       result = wallet.get_public_key(
-        protocol_id: [2, "x402 payment"],
-        key_id: "abc123",
+        protocol_id: [2, "3241645161d8"],
+        key_id: "abc123 0",
         identity_key: false
       )
       expect(result).to eq(public_key: derived_key)
@@ -170,7 +171,7 @@ RSpec.describe X402::RemoteWallet do
 
     context "when the response is missing the derived key" do
       before do
-        server_responses["request"] = ->(_req) { [200, { "amount" => 100 }] }
+        server_responses["getPublicKey"] = ->(_req) { [200, { "amount" => 100 }] }
       end
 
       it "raises ConfigurationError" do
@@ -181,7 +182,7 @@ RSpec.describe X402::RemoteWallet do
 
     context "when the remote wallet returns HTTP 400" do
       before do
-        server_responses["request"] = ->(_req) { [400, { "error" => "bad request" }] }
+        server_responses["getPublicKey"] = ->(_req) { [400, { "error" => "bad request" }] }
       end
 
       it "raises ConfigurationError" do

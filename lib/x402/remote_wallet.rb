@@ -87,7 +87,7 @@ module X402
     end
 
     def fetch_derived_key(protocol_id:, key_id:, counterparty:)
-      params = { action: "request", satoshis: "1" }
+      params = { action: "getPublicKey" }
       params[:protocolId] = Array(protocol_id).join(",") if protocol_id
       params[:keyId] = key_id if key_id
       params[:counterparty] = counterparty if counterparty
@@ -155,9 +155,10 @@ module X402
     end
 
     def extract_identity_key(data)
-      # The @bsv/simple create response includes the identity key in the
-      # top-level object or nested under "identityKey" / "publicKey".
-      key = data["identityKey"] || data["publicKey"] || data["identity_key"]
+      # The @bsv/simple create response returns the identity key as
+      # "serverIdentityKey" at the top level. Other implementations may
+      # use "identityKey", "publicKey", or "identity_key".
+      key = data["serverIdentityKey"] || data["identityKey"] || data["publicKey"] || data["identity_key"]
       raise ConfigurationError, "remote wallet did not return an identity key" if key.nil? || key.to_s.empty?
 
       key
