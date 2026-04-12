@@ -405,12 +405,17 @@ RSpec.describe X402::BSV::PayGateway do
                        unlocking_script: BSV::Script::Script.new("\x00".b)
                      ))
 
+        beef = BSV::Transaction::Beef.new
+        beef.merge_transaction(tx)
+        beef_b64 = Base64.strict_encode64(beef.to_atomic_binary(tx.txid))
+
         payload = {
           "x402Version" => 2,
           "accepted" => accepted,
           "payload" => {
             "rawtx" => tx.to_binary.unpack1("H*"),
-            "txid" => tx.txid_hex
+            "txid" => tx.txid_hex,
+            "beef" => beef_b64
           }
         }
 
@@ -443,6 +448,9 @@ RSpec.describe X402::BSV::PayGateway do
         expect(received_args).not_to be_nil
         expect(received_args[:description]).to eq("PayGateway payment")
         expect(received_args[:tx]).to be_an(Array)
+        # tx bytes should be AtomicBEEF (BRC-95), not raw tx
+        beef_hex = received_args[:tx].pack("C*").unpack1("H*")
+        expect(beef_hex).to include("beef")
 
         output = received_args[:outputs].first
         expect(output[:output_index]).to eq(0)

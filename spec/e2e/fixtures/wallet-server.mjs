@@ -21,7 +21,6 @@
 
 import http from 'node:http'
 import { URL } from 'node:url'
-import { Beef } from '@bsv/sdk'
 import { ServerWallet, createServerWalletHandler } from '@bsv/simple/server'
 
 const port = parseInt(process.env.WALLET_PORT || '9494', 10)
@@ -99,26 +98,18 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // Custom receive action — wraps raw tx bytes in BEEF for internalizeAction
+    // Custom receive action — passes BEEF bytes through to internalizeAction.
+    // The client is expected to send BEEF (BRC-62) in the tx field.
     if (req.method === 'POST' && action === 'receive') {
-      console.error('>>> Custom receive handler entered')
       try {
         let body = ''
         for await (const chunk of req) body += chunk
-        console.error('>>> Body length:', body.length)
         const payment = JSON.parse(body)
 
-        // Wrap raw tx bytes in BEEF for internalizeAction.
-        // The @bsv/sdk expects BEEF format, not raw transaction bytes.
-        const beef = new Beef()
-        beef.mergeRawTx(Uint8Array.from(payment.tx))
-        const beefBytes = Array.from(beef.toBinary())
-
         await client.internalizeAction({
-          tx: beefBytes,
-          tx: beefBytes,
+          tx: payment.tx,
           outputs: [{
-            outputIndex: payment.outputIndex,
+            outputIndex: payment.outputIndex ?? 0,
             protocol: 'wallet payment',
             paymentRemittance: {
               senderIdentityKey: payment.senderIdentityKey,

@@ -76,11 +76,12 @@ module X402
         suffix = payload.dig("accepted", "extra", "derivationSuffix")
         verify_pay_to_signature!(accepted_payee, pay_to_sig, prefix, suffix)
         transaction = decode_transaction(payload)
+        beef_b64 = payload.dig("payload", "beef")
         check_txid_unique!(transaction)
         verify_payment_output!(transaction, required_sats, accepted_payee)
         verify_binding!(transaction, rack_request)
         settle_transaction!(transaction, route)
-        relay_to_wallet(transaction, prefix, suffix)
+        relay_to_wallet(transaction, prefix, suffix, beef_b64)
         build_settlement_result(transaction)
       end
 
@@ -216,11 +217,11 @@ module X402
       # Relay the settled transaction to the operator's wallet for tracking.
       # This is a notification, not a gate — if it fails, the payment has
       # already landed on-chain via ARC and settlement proceeds normally.
-      def relay_to_wallet(transaction, prefix, suffix)
+      def relay_to_wallet(transaction, prefix, suffix, beef_b64 = nil)
         return unless @wallet
         return unless prefix
 
-        internalize_payment!(transaction, prefix, suffix)
+        internalize_payment!(transaction, prefix, suffix, beef_b64)
       rescue StandardError => e
         logger.warn "[pay-gateway] wallet internalisation failed (non-fatal): #{e.class}: #{e.message}"
       end
@@ -228,10 +229,18 @@ module X402
       # Output 0 is always the payment output — built by build_template.
       # The sender_identity_key is the wallet's own identity key because
       # derive_unique_payee_hex uses forSelf derivation (no counterparty).
-      def internalize_payment!(transaction, prefix, suffix)
+      #
+      # When the client includes BEEF (BRC-62) in payload.beef, those bytes
+      # are passed directly to internalize_action. Without BEEF, falls back
+      # to raw tx bytes (which most BRC-100 wallets will reject).
+      def internalize_payment!(transaction, prefix, suffix, beef_b64 = nil)
         identity = @wallet.get_public_key({ identity_key: true })
         sender_key = identity[:public_key] || identity["public_key"]
-        tx_bytes = transaction.to_binary.unpack("C*")
+        tx_bytes = if beef_b64
+                     Base64.strict_decode64(beef_b64).unpack("C*")
+                   else
+                     transaction.to_binary.unpack("C*")
+                   end
         @wallet.internalize_action(
           tx: tx_bytes,
           outputs: [{

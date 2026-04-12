@@ -48,17 +48,30 @@ module E2EHelper
     JSON.parse(Base64.strict_decode64(header))
   end
 
-  # Build a Payment-Signature payload from a signed transaction
+  # Build a Payment-Signature payload from a signed transaction.
+  # Includes BEEF (BRC-62) when the transaction has source data available,
+  # enabling wallet internalisation on the server side.
   def self.build_payment_signature(challenge, transaction)
     accept = challenge["accepts"].first
+
+    payload_inner = {
+      "rawtx" => transaction.to_binary.unpack1("H*"),
+      "txid" => transaction.txid_hex
+    }
+
+    # Include BEEF when possible — BRC-100 wallets need it for internalisation
+    begin
+      beef = BSV::Transaction::Beef.new
+      beef.merge_transaction(transaction)
+      payload_inner["beef"] = Base64.strict_encode64(beef.to_atomic_binary(transaction.txid))
+    rescue StandardError
+      # Source transactions unavailable — send without BEEF
+    end
 
     payload = {
       "x402Version" => 2,
       "accepted" => accept,
-      "payload" => {
-        "rawtx" => transaction.to_binary.unpack1("H*"),
-        "txid" => transaction.txid_hex
-      }
+      "payload" => payload_inner
     }
 
     Base64.strict_encode64(JSON.generate(payload))
