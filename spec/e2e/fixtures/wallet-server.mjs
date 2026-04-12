@@ -98,6 +98,34 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // Custom receive action — passes BEEF bytes through to internalizeAction.
+    // The client is expected to send BEEF (BRC-62) in the tx field.
+    if (req.method === 'POST' && action === 'receive') {
+      try {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        const payment = JSON.parse(body)
+
+        await client.internalizeAction({
+          tx: payment.tx,
+          outputs: [{
+            outputIndex: payment.outputIndex ?? 0,
+            protocol: 'wallet payment',
+            paymentRemittance: {
+              senderIdentityKey: payment.senderIdentityKey,
+              derivationPrefix: payment.derivationPrefix,
+              derivationSuffix: payment.derivationSuffix
+            }
+          }],
+          description: payment.description || 'PayGateway payment'
+        })
+        return jsonResponse(res, 200, { success: true })
+      } catch (err) {
+        console.error('receive error:', err.message)
+        return jsonResponse(res, 500, { success: false, error: `receive failed: ${err.message}` })
+      }
+    }
+
     // Delegate everything else to @bsv/simple handler
     let body = ''
     if (req.method === 'POST') {

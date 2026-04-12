@@ -36,16 +36,18 @@ module X402
     # (cached after first call). Otherwise, delegates to the remote wallet
     # for BRC-42/43 key derivation.
     #
-    # @param identity_key [Boolean] whether to return the identity key
-    # @param protocol_id [Array, nil] BRC-43 protocol ID for derivation
-    # @param key_id [String, nil] key identifier for derivation
-    # @param counterparty [String, nil] counterparty identity key
+    # Matches ProtoWallet interface: accepts a positional Hash of arguments.
+    # Also supports keyword arguments for convenience (used by tests and
+    # direct callers).
+    #
+    # @param args [Hash] arguments hash (ProtoWallet style)
     # @return [Hash] +{ public_key: "hex" }+
-    def get_public_key(identity_key: false, protocol_id: nil, key_id: nil, counterparty: nil, **_rest)
-      if identity_key
+    def get_public_key(args = {}, **kwargs)
+      args = kwargs unless kwargs.empty?
+      if args[:identity_key]
         fetch_identity_key
       else
-        fetch_derived_key(protocol_id: protocol_id, key_id: key_id, counterparty: counterparty)
+        fetch_derived_key(protocol_id: args[:protocol_id], key_id: args[:key_id], counterparty: args[:counterparty])
       end
     end
 
