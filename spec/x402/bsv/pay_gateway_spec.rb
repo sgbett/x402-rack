@@ -485,6 +485,26 @@ RSpec.describe X402::BSV::PayGateway do
         expect(extra).not_to have_key("derivationPrefix")
         expect(extra).not_to have_key("derivationSuffix")
       end
+
+      it "rejects a tampered derivationPrefix via HMAC" do
+        accepted = accepted_from_challenge(wallet_gateway)
+        accepted["extra"]["derivationPrefix"] = "tampered_prefix_value_000"
+        raw = { "x402Version" => 2, "accepted" => accepted,
+                "payload" => { "rawtx" => tx.to_binary.unpack1("H*"), "txid" => tx.txid_hex } }
+        payload = Base64.strict_encode64(JSON.generate(raw))
+        expect { wallet_gateway.settle!("Payment-Signature", payload, mock_request, route) }
+          .to raise_error(X402::VerificationError, /payTo signature mismatch/)
+      end
+
+      it "rejects a tampered derivationSuffix via HMAC" do
+        accepted = accepted_from_challenge(wallet_gateway)
+        accepted["extra"]["derivationSuffix"] = "tampered"
+        raw = { "x402Version" => 2, "accepted" => accepted,
+                "payload" => { "rawtx" => tx.to_binary.unpack1("H*"), "txid" => tx.txid_hex } }
+        payload = Base64.strict_encode64(JSON.generate(raw))
+        expect { wallet_gateway.settle!("Payment-Signature", payload, mock_request, route) }
+          .to raise_error(X402::VerificationError, /payTo signature mismatch/)
+      end
     end
   end
 end
