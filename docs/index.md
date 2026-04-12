@@ -24,25 +24,52 @@ Add to your Gemfile:
 gem "x402-rack"
 ```
 
-Set up a server wallet:
+### Minimal: relay to an existing wallet
 
-```bash
-bundle exec rake x402:wallet:setup
-```
-
-The plug-and-play config:
+The simplest path — no keys, no local wallet. Point `operator_wallet_url` at an existing `@bsv/simple` server wallet:
 
 ```ruby
 X402.configure do |c|
   c.domain = "api.example.com"
-  c.wallet = X402::Wallet.load
-  c.arc_url = "https://arc.taal.com"
-  c.protect method: :GET, path: "/api/expensive", amount_sats: 100
+  c.operator_wallet_url = "https://my-wallet.example.com/api/server-wallet"
+  c.protect method: :GET, path: "/api/data", amount_sats: 100
 end
 
 use X402::Middleware
 ```
 
-`BRC121Gateway` is auto-enabled whenever `wallet:` is set. `PayGateway` is also auto-enabled when `arc_url:` is available. Clients can pay via either protocol.
+PayGateway is auto-enabled. ARC defaults to GorillaPool Arcade. The server holds no private keys.
+
+### With a local wallet (enables BRC-121)
+
+```bash
+bundle exec rake x402:wallet:setup
+```
+
+```ruby
+X402.configure do |c|
+  c.domain = "api.example.com"
+  c.wallet = X402::Wallet.load
+  c.protect method: :GET, path: "/api/data", amount_sats: 100
+end
+
+use X402::Middleware
+```
+
+Both PayGateway and BRC121Gateway are auto-enabled. ARC defaults to GorillaPool Arcade.
+
+### With a remote wallet for all gateways
+
+```ruby
+X402.configure do |c|
+  c.domain = "api.example.com"
+  c.wallet = X402::RemoteWallet.new(url: "https://my-wallet.example.com/api/server-wallet")
+  c.protect method: :GET, path: "/api/data", amount_sats: 100
+end
+
+use X402::Middleware
+```
+
+`RemoteWallet` implements the same duck-typed interface as the local wallet, so all gateways (PayGateway, BRC-121, BRC-105) work with it.
 
 See the [Architecture](architecture.md) guide for how the pieces fit together, or jump to the [API Reference](reference/index.md) for class and method documentation.
