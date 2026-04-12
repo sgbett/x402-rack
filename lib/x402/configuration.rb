@@ -131,10 +131,10 @@ module X402
 
     # Returns a memoised ARC client instance. If +arc_client+ has been
     # injected directly, that takes precedence. Otherwise, builds one
-    # from +arc_url+ (and optional +arc_api_key+).
+    # from +arc_url+ (and optional +arc_api_key+), falling back to
+    # +ARC.default+ when no explicit URL is configured.
     #
     # @return [BSV::Network::ARC]
-    # @raise [ConfigurationError] if +arc_url+ is nil and no +arc_client+ injected
     def shared_arc_client
       return @arc_client if @arc_client
 
@@ -350,10 +350,9 @@ module X402
     # Auto-enables default gateways when a +wallet+ has been set and the
     # caller has not explicitly enabled any gateways.
     #
-    # +BRC121Gateway+ only needs a wallet. +PayGateway+ additionally needs
-    # an ARC endpoint, so it is only auto-enabled when +arc_url+ or
-    # +arc_client+ is available — otherwise you'd be forced to configure
-    # ARC even if you only want BRC-121.
+    # Both +BRC121Gateway+ and +PayGateway+ are auto-enabled. ARC is
+    # always available via +ARC.default+ so PayGateway no longer requires
+    # an explicit +arc_url+.
     def should_auto_enable_defaults?
       !@wallet.nil? && gateway_specs.empty? && (gateways.nil? || gateways.empty?)
     end
@@ -364,13 +363,16 @@ module X402
     end
 
     def arc_available?
-      @arc_client || (arc_url && !arc_url.empty?)
+      true
     end
 
     def build_arc_client
-      raise ConfigurationError, "arc_url is required (or inject arc_client directly)" if arc_url.nil? || arc_url.empty?
-
-      ::BSV::Network::ARC.new(arc_url, api_key: arc_api_key)
+      if arc_url && !arc_url.empty?
+        ::BSV::Network::ARC.new(arc_url, api_key: arc_api_key)
+      else
+        logger.info "[x402] using default ARC broadcaster (GorillaPool Arcade)"
+        ::BSV::Network::ARC.default(testnet: @network == "bsv:testnet")
+      end
     end
 
     def build_wallet

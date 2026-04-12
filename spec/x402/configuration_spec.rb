@@ -394,10 +394,49 @@ RSpec.describe X402::Configuration do
       expect(BSV::Network::ARC).to have_received(:new).once
     end
 
-    it "raises when arc_url is missing and no injected client" do
-      expect { config.shared_arc_client }.to raise_error(
-        X402::ConfigurationError, /arc_url is required/
-      )
+    it "falls back to ARC.default when arc_url is nil" do
+      arc_default = instance_double("BSV::Network::ARC")
+      allow(BSV::Network::ARC).to receive(:default)
+        .with(testnet: false)
+        .and_return(arc_default)
+
+      expect(config.shared_arc_client).to eq(arc_default)
+    end
+
+    it "falls back to ARC.default with testnet when network is bsv:testnet" do
+      arc_default = instance_double("BSV::Network::ARC")
+      config.network = "bsv:testnet"
+      allow(BSV::Network::ARC).to receive(:default)
+        .with(testnet: true)
+        .and_return(arc_default)
+
+      expect(config.shared_arc_client).to eq(arc_default)
+    end
+
+    it "falls back to ARC.default when arc_url is empty string" do
+      arc_default = instance_double("BSV::Network::ARC")
+      config.arc_url = ""
+      allow(BSV::Network::ARC).to receive(:default)
+        .with(testnet: false)
+        .and_return(arc_default)
+
+      expect(config.shared_arc_client).to eq(arc_default)
+    end
+  end
+
+  describe "#arc_available?" do
+    it "returns true even without arc_url or arc_client" do
+      expect(config.send(:arc_available?)).to be true
+    end
+
+    it "returns true when arc_url is set" do
+      config.arc_url = "https://arc.example.com"
+      expect(config.send(:arc_available?)).to be true
+    end
+
+    it "returns true when arc_client is injected" do
+      config.arc_client = instance_double("BSV::Network::ARC")
+      expect(config.send(:arc_available?)).to be true
     end
   end
 
@@ -615,12 +654,18 @@ RSpec.describe X402::Configuration do
         )
       end
 
-      it "auto-enables only BRC121Gateway when wallet is set without arc_url" do
+      it "auto-enables both PayGateway and BRC121Gateway when wallet is set without arc_url (ARC.default)" do
+        arc_default = instance_double("BSV::Network::ARC")
+        allow(BSV::Network::ARC).to receive(:default).and_return(arc_default)
+
         config.wallet = wallet
         config.arc_url = nil
         config.validate!
 
-        expect(config.gateways.map(&:class)).to contain_exactly(X402::BSV::BRC121Gateway)
+        expect(config.gateways.map(&:class)).to contain_exactly(
+          X402::BSV::PayGateway,
+          X402::BSV::BRC121Gateway
+        )
       end
 
       it "auto-enables PayGateway when arc_client is injected without arc_url" do
@@ -780,12 +825,16 @@ RSpec.describe X402::Configuration do
         expect(config.gateways.first).to be_a(X402::BSV::PayGateway)
       end
 
-      it "raises missing arc_url when DSL gateway needs shared client" do
+      it "falls back to ARC.default when DSL gateway needs shared client without arc_url" do
+        arc_default = instance_double("BSV::Network::ARC")
+        allow(BSV::Network::ARC).to receive(:default).and_return(arc_default)
+
         config.arc_url = nil
         config.enable :pay_gateway
-        expect { config.validate! }.to raise_error(
-          X402::ConfigurationError, /arc_url is required/
-        )
+        config.validate!
+
+        expect(config.gateways.first).to be_a(X402::BSV::PayGateway)
+        expect(config.gateways.first.arc_client).to eq(arc_default)
       end
 
       it "does not require arc_url when all gateways provide own arc_client" do
