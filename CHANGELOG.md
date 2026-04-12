@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-04-12
+
+### Added
+
+- **RemoteWallet adapter** (`X402::RemoteWallet`) — HTTP client implementing
+  the duck-typed wallet interface by calling a remote `@bsv/simple` server
+  wallet API. Supports `get_public_key` (with identity key caching) and
+  `internalize_action` for settlement relay. Thread-safe.
+- **BRC121Gateway** — new gateway implementing the BRC-121 "Simple 402
+  Payments" spec. Stateless server with BRC-100 wallet-backed validation
+  via `internalize_action`. 30-second timestamp freshness window, TxidStore
+  replay protection, and `isMerge` checking for wallet-level deduplication.
+- **`operator_wallet_url` configuration** — point at an existing `@bsv/simple`
+  server wallet and PayGateway is auto-enabled with no keys on the server.
+  The minimal three-line configuration path.
+- **`config.wallet =` DSL** — first-class wallet attribute. When set with no
+  explicit `enable` calls, both PayGateway and BRC121Gateway are auto-enabled.
+- **`config.network =` attribute** — parameterised BSV network (`bsv:mainnet`
+  or `bsv:testnet`). Respects `BSV_NETWORK` environment variable. Replaces
+  hardcoded `NETWORK` constants across all four gateways.
+- **ARC default fallback** — `build_arc_client` falls back to `ARC.default`
+  (GorillaPool Arcade) when no explicit `arc_url` is configured.
+- **PayGateway wallet relay** — after ARC broadcast, relays settlement to the
+  operator's wallet via `internalize_action` (log-and-continue on failure).
+  BRC-29 derivation params round-trip through the challenge for wallet-
+  spendable addresses.
+- **`X402::Wallet.load`** — resolves signing WIF from `SERVER_WIF` env or
+  `~/.bsv-wallet/wallet.key`, returns a fully-constructed `WalletClient`.
+- **`rake x402:wallet:setup`** — interactive wallet create/restore task.
+  Never overwrites existing wallets. File permissions enforced (0600/0700).
+- **Rails Railtie** — auto-loads rake tasks in Rails applications.
+
+### Changed
+
+- **BRC105Gateway: `wallet:` replaces `arc_client:`** — `settle!` now uses
+  `wallet.internalize_action` instead of direct ARC broadcast, per the
+  BRC-105 spec. Constructor takes `wallet:` parameter; `arc_client:` removed.
+  **(Breaking for direct BRC105Gateway construction; DSL users update
+  seamlessly.)**
+- **Gateway base class uses BRC-29 protocol ID** — `[2, "3241645161d8"]`
+  replaces `[2, "x402 payment"]`. Derived addresses are now wallet-spendable
+  via standard BRC-29 key derivation.
+- **PayGateway challenge carries `derivationPrefix`/`derivationSuffix`**
+  instead of `keyId`. HMAC covers payTo + prefix + suffix.
+- **Gemspec dependency floors raised** — `bsv-sdk >= 0.9.0`, `bsv-wallet >= 0.5.0`.
+
+### Fixed
+
+- **PayGateway BRC-29 derivation alignment** — was using a custom protocol ID
+  that no wallet recognised; operator funds were unrecoverable. Now uses the
+  standard BRC-29 protocol ID shared with BRC-105 and BRC-121.
+- **ProofGateway lenient base64** — `Base64.decode64` replaced with
+  `strict_decode64`, consistent with all other gateways.
+- **PayGateway `verify_binding!`** — now uses `build_op_return_script` instead
+  of duplicating the OP_RETURN hex via string interpolation.
+- **BRC121Gateway nonce validation** — two-layer check (regex + `strict_decode64`).
+- **BRC121Gateway `check_internalization_result!`** — checks `isMerge` and
+  `accepted` on the wallet result per BRC-121 §5 step 5.
+- **Wallet setup file permissions** — `File.chmod` enforced after write on
+  both new and pre-existing files/directories.
+
 ## [0.7.0] - 2026-04-08
 
 ### Added
