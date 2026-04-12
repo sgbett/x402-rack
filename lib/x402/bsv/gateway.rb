@@ -48,14 +48,14 @@ module X402
         tx = ::BSV::Transaction::Transaction.new
 
         # Output 0: payment (unique address if wallet configured, static otherwise)
-        payee_hex = derive_payee_hex
+        payee_hex, key_id = derive_payee_hex
         payee_script = ::BSV::Script::Script.from_hex(payee_hex)
         tx.add_output(::BSV::Transaction::TransactionOutput.new(
                         satoshis: required_sats,
                         locking_script: payee_script
                       ))
 
-        [tx, payee_hex]
+        [tx, payee_hex, key_id]
       end
 
       # Compute the SHA-256 hash used for request binding.
@@ -73,11 +73,13 @@ module X402
       # Derive a unique payee locking script hex for this challenge.
       # Uses BRC-43 key derivation when a wallet is configured.
       # Falls back to the static payee_locking_script_hex otherwise.
+      #
+      # @return [Array(String, String|nil)] payee script hex and key_id (nil for static payee)
       def derive_payee_hex
         if @wallet
           derive_unique_payee_hex
         else
-          resolve_static_payee_hex
+          [resolve_static_payee_hex, nil]
         end
       end
 
@@ -90,7 +92,7 @@ module X402
                                         })
         pubkey = ::BSV::Primitives::PublicKey.from_hex(result[:public_key])
         h160 = pubkey.hash160.unpack1("H*")
-        "76a914#{h160}88ac"
+        ["76a914#{h160}88ac", key_id]
       end
 
       def resolve_static_payee_hex
@@ -105,20 +107,21 @@ module X402
         ::BSV::Script::Script.from_hex(hex)
       end
 
-      # HMAC-sign the payTo field to prevent client tampering.
+      # HMAC-sign the payTo field (and optional keyId) to prevent client tampering.
       # The signature is included in the challenge and verified at settlement.
-      def sign_pay_to(pay_to_hex)
-        OpenSSL::HMAC.hexdigest("SHA256", @challenge_secret, pay_to_hex)
+      def sign_pay_to(pay_to_hex, key_id = nil)
+        data = key_id ? "#{pay_to_hex}:#{key_id}" : pay_to_hex
+        OpenSSL::HMAC.hexdigest("SHA256", @challenge_secret, data)
       end
 
       # Verify the payTo HMAC from an echoed challenge/accepted block.
       # Raises VerificationError if the signature doesn't match.
-      def verify_pay_to_signature!(pay_to_hex, signature)
+      def verify_pay_to_signature!(pay_to_hex, signature, key_id = nil)
         if signature.nil?
           raise X402::VerificationError.new("payTo signature mismatch — possible tampering", status: 400)
         end
 
-        expected = sign_pay_to(pay_to_hex)
+        expected = sign_pay_to(pay_to_hex, key_id)
         return if secure_compare(expected, signature)
 
         raise X402::VerificationError.new("payTo signature mismatch — possible tampering", status: 400)
