@@ -226,7 +226,11 @@ module X402
       end
 
       # Output 0 is always the payment output — built by build_template.
+      # The sender_identity_key is the wallet's own identity key because
+      # derive_unique_payee_hex uses forSelf derivation (no counterparty).
       def internalize_payment!(transaction, prefix, suffix)
+        identity = @wallet.get_public_key({ identity_key: true })
+        sender_key = identity[:public_key] || identity["public_key"]
         tx_bytes = transaction.to_binary.unpack("C*")
         @wallet.internalize_action(
           tx: tx_bytes,
@@ -236,7 +240,7 @@ module X402
             payment_remittance: {
               derivation_prefix: prefix,
               derivation_suffix: suffix,
-              sender_identity_key: "anyone"
+              sender_identity_key: sender_key
             }
           }],
           description: "PayGateway payment"

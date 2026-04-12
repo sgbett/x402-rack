@@ -21,6 +21,7 @@
 
 import http from 'node:http'
 import { URL } from 'node:url'
+import { Beef } from '@bsv/sdk'
 import { ServerWallet, createServerWalletHandler } from '@bsv/simple/server'
 
 const port = parseInt(process.env.WALLET_PORT || '9494', 10)
@@ -95,6 +96,42 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         console.error('getPublicKey error:', err.message)
         return jsonResponse(res, 500, { error: err.message })
+      }
+    }
+
+    // Custom receive action — wraps raw tx bytes in BEEF for internalizeAction
+    if (req.method === 'POST' && action === 'receive') {
+      console.error('>>> Custom receive handler entered')
+      try {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        console.error('>>> Body length:', body.length)
+        const payment = JSON.parse(body)
+
+        // Wrap raw tx bytes in BEEF for internalizeAction.
+        // The @bsv/sdk expects BEEF format, not raw transaction bytes.
+        const beef = new Beef()
+        beef.mergeRawTx(Uint8Array.from(payment.tx))
+        const beefBytes = Array.from(beef.toBinary())
+
+        await client.internalizeAction({
+          tx: beefBytes,
+          tx: beefBytes,
+          outputs: [{
+            outputIndex: payment.outputIndex,
+            protocol: 'wallet payment',
+            paymentRemittance: {
+              senderIdentityKey: payment.senderIdentityKey,
+              derivationPrefix: payment.derivationPrefix,
+              derivationSuffix: payment.derivationSuffix
+            }
+          }],
+          description: payment.description || 'PayGateway payment'
+        })
+        return jsonResponse(res, 200, { success: true })
+      } catch (err) {
+        console.error('receive error:', err.message)
+        return jsonResponse(res, 500, { success: false, error: `receive failed: ${err.message}` })
       }
     }
 

@@ -93,8 +93,8 @@ module X402
       # PayGateway uses one output per payment. The wallet can later derive
       # the matching private key using the same prefix/suffix pair.
       def derive_unique_payee_hex
-        prefix = SecureRandom.hex(16)
-        suffix = "0"
+        prefix = Base64.strict_encode64(SecureRandom.random_bytes(16))
+        suffix = Base64.strict_encode64("0")
         key_id = "#{prefix} #{suffix}"
         result = @wallet.get_public_key({
                                           protocol_id: BRC29_PROTOCOL_ID,

@@ -450,8 +450,8 @@ RSpec.describe X402::BSV::PayGateway do
         remittance = output[:payment_remittance]
         expect(remittance[:derivation_prefix]).to be_a(String)
         expect(remittance[:derivation_prefix]).not_to be_empty
-        expect(remittance[:derivation_suffix]).to eq("0")
-        expect(remittance[:sender_identity_key]).to eq("anyone")
+        expect(remittance[:derivation_suffix]).to eq(Base64.strict_encode64("0"))
+        expect(remittance[:sender_identity_key]).to match(/\A[0-9a-f]{66}\z/)
       end
 
       it "succeeds even when internalize_action raises" do
@@ -474,7 +474,7 @@ RSpec.describe X402::BSV::PayGateway do
         expect(extra).to have_key("derivationPrefix")
         expect(extra["derivationPrefix"]).to be_a(String)
         expect(extra["derivationPrefix"]).not_to be_empty
-        expect(extra["derivationSuffix"]).to eq("0")
+        expect(extra["derivationSuffix"]).to eq(Base64.strict_encode64("0"))
       end
 
       it "does not include derivation params in challenge extra without wallet" do
