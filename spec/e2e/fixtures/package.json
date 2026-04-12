@@ -2,7 +2,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@bsv/simple": "^0.3.0",
-    "dotenv": "^16.0.0"
+    "@bsv/simple": "0.3.0",
+    "dotenv": "16.6.1"
   }
 }
