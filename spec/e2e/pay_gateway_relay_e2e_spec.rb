@@ -52,6 +52,7 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
         wallet_ready = true
         break
       end
+      sleep 0.5
     rescue Errno::ECONNREFUSED
       sleep 0.5
     end
@@ -71,11 +72,13 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
     E2EHelper.stop_server(@rack_server, @rack_thread)
 
     if @wallet_pid
-      Process.kill("TERM", @wallet_pid)
-      Process.wait(@wallet_pid)
+      begin
+        Process.kill("TERM", @wallet_pid)
+        Process.wait(@wallet_pid)
+      rescue Errno::ESRCH, Errno::ECHILD
+        # Process already exited — nothing to do
+      end
     end
-  rescue Errno::ESRCH, Errno::ECHILD
-    # Process already exited — nothing to do
   ensure
     X402.reset_configuration!
   end
