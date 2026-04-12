@@ -573,6 +573,8 @@ RSpec.describe X402::Configuration do
       end
 
       it "raises when no key source is provided" do
+        config.wallet = nil
+        config.payee_locking_script_hex = "76a914..."
         config.enable :brc105_gateway
         expect { config.validate! }.to raise_error(
           X402::ConfigurationError, /brc105_gateway requires one of/
@@ -903,6 +905,8 @@ RSpec.describe X402::Configuration do
       it "allows power user to provide explicit key_deriver and prefix_store" do
         key_deriver = instance_double("BSV::Wallet::KeyDeriver")
         prefix_store = instance_double("X402::BSV::PrefixStore::Memory")
+        brc105_wallet = double("wallet", internalize_action: { accepted: true })
+        config.wallet = brc105_wallet
         config.enable :brc105_gateway, key_deriver: key_deriver, prefix_store: prefix_store
         config.validate!
 

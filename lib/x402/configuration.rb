@@ -39,7 +39,7 @@ module X402
     ].freeze
 
     BRC105_GATEWAY_KNOWN_OPTS = %i[
-      arc_client key_deriver server_wif server_key prefix_store
+      wallet key_deriver server_wif server_key prefix_store
     ].freeze
 
     BRC121_GATEWAY_KNOWN_OPTS = %i[wallet txid_store].freeze
