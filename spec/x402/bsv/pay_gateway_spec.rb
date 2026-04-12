@@ -430,7 +430,7 @@ RSpec.describe X402::BSV::PayGateway do
         expect(called).to be true
       end
 
-      it "passes correct derivation params to internalize_action" do
+      it "passes correct BRC-29 derivation params to internalize_action" do
         received_args = nil
         mock_wallet.define_singleton_method(:internalize_action) do |**kwargs|
           received_args = kwargs
@@ -446,10 +446,12 @@ RSpec.describe X402::BSV::PayGateway do
 
         output = received_args[:outputs].first
         expect(output[:output_index]).to eq(0)
-        expect(output[:protocol]).to eq("x402 payment")
-        expect(output[:payment_remittance][:derivation_prefix]).to be_a(String)
-        expect(output[:payment_remittance][:derivation_prefix]).not_to be_empty
-        expect(output[:payment_remittance][:sender_identity_key]).to eq("anyone")
+        expect(output[:protocol]).to eq("wallet payment")
+        remittance = output[:payment_remittance]
+        expect(remittance[:derivation_prefix]).to be_a(String)
+        expect(remittance[:derivation_prefix]).not_to be_empty
+        expect(remittance[:derivation_suffix]).to eq("0")
+        expect(remittance[:sender_identity_key]).to eq("anyone")
       end
 
       it "succeeds even when internalize_action raises" do
@@ -464,22 +466,24 @@ RSpec.describe X402::BSV::PayGateway do
         expect(result.txid).not_to be_nil
       end
 
-      it "includes keyId in the challenge extra when wallet is present" do
+      it "includes derivation params in the challenge extra when wallet is present" do
         headers = wallet_gateway.challenge_headers(mock_request, route)
         challenge = JSON.parse(Base64.strict_decode64(headers["Payment-Required"]))
         extra = challenge["accepts"].first["extra"]
 
-        expect(extra).to have_key("keyId")
-        expect(extra["keyId"]).to be_a(String)
-        expect(extra["keyId"]).not_to be_empty
+        expect(extra).to have_key("derivationPrefix")
+        expect(extra["derivationPrefix"]).to be_a(String)
+        expect(extra["derivationPrefix"]).not_to be_empty
+        expect(extra["derivationSuffix"]).to eq("0")
       end
 
-      it "does not include keyId in challenge extra without wallet" do
+      it "does not include derivation params in challenge extra without wallet" do
         headers = gateway.challenge_headers(mock_request, route)
         challenge = JSON.parse(Base64.strict_decode64(headers["Payment-Required"]))
         extra = challenge["accepts"].first["extra"]
 
-        expect(extra).not_to have_key("keyId")
+        expect(extra).not_to have_key("derivationPrefix")
+        expect(extra).not_to have_key("derivationSuffix")
       end
     end
   end

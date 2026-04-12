@@ -14,9 +14,11 @@ module X402
     # index alignment (input N → output N for each signer).
     #
     # When a wallet is provided, each challenge derives a unique payee
-    # address via BRC-43 key derivation, preventing address reuse.
+    # address via BRC-29 key derivation, preventing address reuse.
     class Gateway
-      PROTOCOL_ID = [2, "x402 payment"].freeze
+      # BRC-29 protocol ID — shared with BRC-105 and BRC-121 so all
+      # gateways derive keys the wallet can spend via the same scheme.
+      BRC29_PROTOCOL_ID = [2, "3241645161d8"].freeze
 
       attr_reader :payee_locking_script_hex
 
@@ -43,19 +45,20 @@ module X402
       #
       # @param rack_request [Rack::Request]
       # @param route [X402::Configuration::Route]
-      # @return [Array(BSV::Transaction::Transaction, String)] transaction and payee script hex
+      # @return [Array(BSV::Transaction::Transaction, String, String, String)]
+      #   transaction, payee script hex, derivation prefix, derivation suffix
       def build_template(_rack_request, required_sats)
         tx = ::BSV::Transaction::Transaction.new
 
         # Output 0: payment (unique address if wallet configured, static otherwise)
-        payee_hex, key_id = derive_payee_hex
+        payee_hex, prefix, suffix = derive_payee_hex
         payee_script = ::BSV::Script::Script.from_hex(payee_hex)
         tx.add_output(::BSV::Transaction::TransactionOutput.new(
                         satoshis: required_sats,
                         locking_script: payee_script
                       ))
 
-        [tx, payee_hex, key_id]
+        [tx, payee_hex, prefix, suffix]
       end
 
       # Compute the SHA-256 hash used for request binding.
@@ -71,28 +74,36 @@ module X402
       private
 
       # Derive a unique payee locking script hex for this challenge.
-      # Uses BRC-43 key derivation when a wallet is configured.
+      # Uses BRC-29 key derivation when a wallet is configured.
       # Falls back to the static payee_locking_script_hex otherwise.
       #
-      # @return [Array(String, String|nil)] payee script hex and key_id (nil for static payee)
+      # @return [Array(String, String|nil, String|nil)] payee hex, derivation prefix, derivation suffix
       def derive_payee_hex
         if @wallet
           derive_unique_payee_hex
         else
-          [resolve_static_payee_hex, nil]
+          [resolve_static_payee_hex, nil, nil]
         end
       end
 
+      # Derive a unique payee address using BRC-29 key derivation.
+      #
+      # BRC-29 invoice number: "2-3241645161d8-<prefix> <suffix>"
+      # The prefix is random per payment; the suffix is fixed ("0") since
+      # PayGateway uses one output per payment. The wallet can later derive
+      # the matching private key using the same prefix/suffix pair.
       def derive_unique_payee_hex
-        key_id = SecureRandom.hex(16)
+        prefix = SecureRandom.hex(16)
+        suffix = "0"
+        key_id = "#{prefix} #{suffix}"
         result = @wallet.get_public_key({
-                                          protocol_id: PROTOCOL_ID,
+                                          protocol_id: BRC29_PROTOCOL_ID,
                                           key_id: key_id,
                                           identity_key: false
                                         })
         pubkey = ::BSV::Primitives::PublicKey.from_hex(result[:public_key])
         h160 = pubkey.hash160.unpack1("H*")
-        ["76a914#{h160}88ac", key_id]
+        ["76a914#{h160}88ac", prefix, suffix]
       end
 
       def resolve_static_payee_hex
@@ -107,21 +118,26 @@ module X402
         ::BSV::Script::Script.from_hex(hex)
       end
 
-      # HMAC-sign the payTo field (and optional keyId) to prevent client tampering.
-      # The signature is included in the challenge and verified at settlement.
-      def sign_pay_to(pay_to_hex, key_id = nil)
-        data = key_id ? "#{pay_to_hex}:#{key_id}" : pay_to_hex
+      # HMAC-sign the payTo field (and optional derivation params) to
+      # prevent client tampering. The signature is included in the
+      # challenge and verified at settlement.
+      def sign_pay_to(pay_to_hex, prefix = nil, suffix = nil)
+        data = if prefix
+                 "#{pay_to_hex}:#{prefix}:#{suffix}"
+               else
+                 pay_to_hex
+               end
         OpenSSL::HMAC.hexdigest("SHA256", @challenge_secret, data)
       end
 
       # Verify the payTo HMAC from an echoed challenge/accepted block.
       # Raises VerificationError if the signature doesn't match.
-      def verify_pay_to_signature!(pay_to_hex, signature, key_id = nil)
+      def verify_pay_to_signature!(pay_to_hex, signature, prefix = nil, suffix = nil)
         if signature.nil?
           raise X402::VerificationError.new("payTo signature mismatch — possible tampering", status: 400)
         end
 
-        expected = sign_pay_to(pay_to_hex, key_id)
+        expected = sign_pay_to(pay_to_hex, prefix, suffix)
         return if secure_compare(expected, signature)
 
         raise X402::VerificationError.new("payTo signature mismatch — possible tampering", status: 400)

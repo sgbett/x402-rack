@@ -72,14 +72,15 @@ module X402
         verify_accepted!(payload, required_sats)
         accepted_payee = payload.dig("accepted", "payTo")
         pay_to_sig = payload.dig("accepted", "extra", "payToSig")
-        key_id = payload.dig("accepted", "extra", "keyId")
-        verify_pay_to_signature!(accepted_payee, pay_to_sig, key_id)
+        prefix = payload.dig("accepted", "extra", "derivationPrefix")
+        suffix = payload.dig("accepted", "extra", "derivationSuffix")
+        verify_pay_to_signature!(accepted_payee, pay_to_sig, prefix, suffix)
         transaction = decode_transaction(payload)
         check_txid_unique!(transaction)
         verify_payment_output!(transaction, required_sats, accepted_payee)
         verify_binding!(transaction, rack_request)
         settle_transaction!(transaction, route)
-        relay_to_wallet(transaction, key_id)
+        relay_to_wallet(transaction, prefix, suffix)
         build_settlement_result(transaction)
       end
 
@@ -87,7 +88,7 @@ module X402
 
       def build_challenge(rack_request, route)
         required_sats = route.resolve_amount_sats
-        template, payee_hex, key_id = build_template(rack_request, required_sats)
+        template, payee_hex, prefix, suffix = build_template(rack_request, required_sats)
 
         # PayGateway includes OP_RETURN in the template (no fee delegation index issues)
         binding_hash = request_binding_hash(rack_request)
@@ -99,16 +100,19 @@ module X402
         {
           "x402Version" => 2,
           "resource" => { "url" => rack_request.path_info },
-          "accepts" => [build_accept_entry(payee_hex, required_sats, template, key_id)]
+          "accepts" => [build_accept_entry(payee_hex, required_sats, template, prefix, suffix)]
         }
       end
 
-      def build_accept_entry(payee_hex, required_sats, template, key_id)
+      def build_accept_entry(payee_hex, required_sats, template, prefix, suffix)
         extra = {
           "partialTx" => Base64.strict_encode64(template.to_binary),
-          "payToSig" => sign_pay_to(payee_hex, key_id)
+          "payToSig" => sign_pay_to(payee_hex, prefix, suffix)
         }
-        extra["keyId"] = key_id if key_id
+        if prefix
+          extra["derivationPrefix"] = prefix
+          extra["derivationSuffix"] = suffix
+        end
 
         {
           "scheme" => SCHEME,
@@ -212,25 +216,26 @@ module X402
       # Relay the settled transaction to the operator's wallet for tracking.
       # This is a notification, not a gate — if it fails, the payment has
       # already landed on-chain via ARC and settlement proceeds normally.
-      def relay_to_wallet(transaction, key_id)
+      def relay_to_wallet(transaction, prefix, suffix)
         return unless @wallet
-        return unless key_id
+        return unless prefix
 
-        internalize_payment!(transaction, key_id)
+        internalize_payment!(transaction, prefix, suffix)
       rescue StandardError => e
         logger.warn "[pay-gateway] wallet internalisation failed (non-fatal): #{e.class}: #{e.message}"
       end
 
-      def internalize_payment!(transaction, key_id)
+      # Output 0 is always the payment output — built by build_template.
+      def internalize_payment!(transaction, prefix, suffix)
         tx_bytes = transaction.to_binary.unpack("C*")
         @wallet.internalize_action(
           tx: tx_bytes,
           outputs: [{
             output_index: 0,
-            protocol: "x402 payment",
+            protocol: "wallet payment",
             payment_remittance: {
-              derivation_prefix: key_id,
-              derivation_suffix: key_id,
+              derivation_prefix: prefix,
+              derivation_suffix: suffix,
               sender_identity_key: "anyone"
             }
           }],

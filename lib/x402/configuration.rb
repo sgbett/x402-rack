@@ -396,6 +396,9 @@ module X402
       enable(:pay_gateway) if arc_available?
     end
 
+    # Always true — ARC.default (GorillaPool Arcade) is available even
+    # when no explicit arc_url is configured. PayGateway is auto-enabled
+    # whenever a wallet is present.
     def arc_available?
       true
     end
