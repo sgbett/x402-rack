@@ -1,2 +1,2 @@
-spec/e2e/fixtures/node_modules/
-spec/e2e/fixtures/.server-wallet.json
+node_modules/
+.server-wallet.json
