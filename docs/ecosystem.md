@@ -54,15 +54,17 @@ These namespaces must not overlap. When designing new headers or gateway types, 
 
 ## Our Position
 
-**PayGateway** implements the Coinbase v2 header spec with BSV as the settlement network — BSV as a first-class citizen in the broader x402 ecosystem.
+**x402-rack is a payment gate, not a wallet.** It verifies payments, broadcasts when required, and relays settlement events to the operator's wallet. It should never hold funds or require private key material on the server.
+
+**PayGateway** implements the Coinbase v2 header spec with BSV as the settlement network — BSV as a first-class citizen in the broader x402 ecosystem. It is the only gateway that works without a wallet: `operator_wallet_url` enables a keyless relay mode where the server derives unique payment addresses from the remote wallet's public key, broadcasts via ARC (defaulting to GorillaPool Arcade), and relays settlement to the wallet for UTXO tracking. With a wallet, PayGateway converges to the same `internalize_action` settlement engine as BRC-121 and BRC-105.
 
 **BRC121Gateway** implements the BSV Association's simple HTTP payment protocol — stateless, BRC-100 wallet-native, zero config. The most direct path to a working BSV-native x402 server.
 
-**BRC105Gateway** implements the BSV Association's authenticated payment protocol — requires BRC-103 middleware per spec. Transitional in x402-rack today; clients that send `x-bsv-auth-identity-key` as an HTTP header work via a documented stopgap until a Ruby BRC-103 middleware lands.
+**BRC105Gateway** implements the BSV Association's authenticated payment protocol — requires BRC-103 middleware per spec. Settlement is delegated to `wallet.internalize_action` (no longer broadcasts directly to ARC). Transitional in x402-rack today; clients that send `x-bsv-auth-identity-key` as an HTTP header work via a documented stopgap until a Ruby BRC-103 middleware lands.
 
 **ProofGateway** implements merkleworks x402 — experimental; kept for compatibility with the merkleworks ecosystem.
 
-PayGateway and BRC121Gateway are auto-enabled when you set `config.wallet = ...`. The other two are opt-in via `config.enable :brc105_gateway` or `:proof_gateway`.
+All three wallet-capable gateways (PayGateway, BRC-121, BRC-105) converge on `internalize_action` for settlement — different wire protocols, same settlement engine. PayGateway is auto-enabled via `operator_wallet_url` (no wallet needed) or `config.wallet =`. BRC121Gateway is auto-enabled when `wallet:` is set. BRC105Gateway and ProofGateway are opt-in via `config.enable`.
 
 ## Related Projects
 

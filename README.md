@@ -17,6 +17,24 @@ bundle install
 
 ## Quick start
 
+### Minimal: relay to an existing wallet
+
+The simplest setup — no keys, no local wallet, no ARC configuration. Point `operator_wallet_url` at an existing `@bsv/simple` server wallet and PayGateway is auto-enabled:
+
+```ruby
+X402.configure do |c|
+  c.domain = "api.example.com"
+  c.operator_wallet_url = "https://my-wallet.example.com/api/server-wallet"
+  c.protect method: :GET, path: "/api/data", amount_sats: 100
+end
+
+use X402::Middleware
+```
+
+ARC defaults to GorillaPool Arcade. The server holds no private keys — it derives unique payment addresses from the remote wallet's public key, broadcasts via ARC, then relays the settlement to the wallet for UTXO tracking.
+
+### With a local wallet (enables BRC-121)
+
 Set up a server wallet:
 
 ```bash
@@ -33,37 +51,49 @@ bundle exec rake x402:wallet:setup
 Then add the middleware:
 
 ```ruby
-# config.ru or Rails initialiser
-require "x402"
-
-X402.configure do |config|
-  config.domain = "api.example.com"
-  config.wallet = X402::Wallet.load
-  config.arc_url = "https://arc.taal.com"
-
-  config.protect method: :GET, path: "/api/expensive", amount_sats: 100
+X402.configure do |c|
+  c.domain = "api.example.com"
+  c.wallet = X402::Wallet.load
+  c.protect method: :GET, path: "/api/data", amount_sats: 100
 end
 
 use X402::Middleware
 ```
 
-That's it. With `wallet:` set and no explicit `enable` calls, gateways are auto-wired based on what's configured:
+Both PayGateway and BRC121Gateway are auto-enabled. ARC defaults to GorillaPool Arcade.
 
-- **`BRC121Gateway`** — always enabled when `wallet:` is set (truly zero-config — no ARC needed)
-- **`PayGateway`** — also enabled when `arc_url:` (or `arc_client:`) is available
+### With a remote wallet for all gateways
+
+`RemoteWallet` implements the same duck-typed interface as the local wallet, so all gateways work with it — PayGateway, BRC-121, and BRC-105:
+
+```ruby
+X402.configure do |c|
+  c.domain = "api.example.com"
+  c.wallet = X402::RemoteWallet.new(url: "https://my-wallet.example.com/api/server-wallet")
+  c.protect method: :GET, path: "/api/data", amount_sats: 100
+end
+
+use X402::Middleware
+```
+
+With `wallet:` set and no explicit `enable` calls, gateways are auto-wired:
+
+- **`PayGateway`** — works with or without a wallet (the only gateway that does). Without a wallet, it uses `operator_wallet_url` for keyless relay. With a wallet, it uses `internalize_action` for settlement — converging with BRC-121's approach.
+- **`BRC121Gateway`** — always enabled when `wallet:` is set. Requires a wallet (local or remote).
+- **`BRC105Gateway`** — opt-in via `config.enable :brc105_gateway`. Requires a wallet.
 
 Clients can pay using whichever protocol they support; the middleware dispatches on proof header.
 
 ## Gateways
 
-| Gateway | Setup required | Status |
-|---------|----------------|--------|
-| `PayGateway` (Coinbase v2) | None — auto-enabled | Stable |
-| `BRC121Gateway` (BRC-121) | None — auto-enabled | Stable |
-| `BRC105Gateway` (BRC-105) | Requires BRC-103 middleware per spec; transitional HTTP-header stopgap for now | Transitional |
-| `ProofGateway` (merkleworks) | Experimental | Under development |
+| Gateway | Wallet required? | Setup required | Status |
+|---------|-----------------|----------------|--------|
+| `PayGateway` (Coinbase v2) | No — works with `operator_wallet_url` alone | Auto-enabled | Stable |
+| `BRC121Gateway` (BRC-121) | Yes (local or remote) | Auto-enabled when `wallet:` set | Stable |
+| `BRC105Gateway` (BRC-105) | Yes (local or remote) | `config.enable :brc105_gateway` | Transitional |
+| `ProofGateway` (merkleworks) | No | `config.enable :proof_gateway` | Experimental |
 
-`BRC121Gateway` is truly zero-config — it only needs a wallet. `PayGateway` is auto-enabled when `arc_url` is also set. `BRC105Gateway` and `ProofGateway` are opt-in via `config.enable`.
+PayGateway is the only gateway that works without a wallet — it derives payment addresses from the operator's public key and relays settlement after broadcast. BRC-121 and BRC-105 require a wallet for `internalize_action`. ARC defaults to GorillaPool Arcade when no explicit `arc_url` is configured.
 
 ## Advanced configuration
 
@@ -73,7 +103,6 @@ Clients can pay using whichever protocol they support; the middleware dispatches
 X402.configure do |config|
   config.domain = "api.example.com"
   config.wallet = X402::Wallet.load
-  config.arc_url = "https://arc.taal.com"
 
   config.enable :pay_gateway                           # explicit, same as default
   config.enable :brc105_gateway                        # opt in to BRC-105
@@ -86,8 +115,8 @@ If any `config.enable` calls are made, the auto-enable is skipped — you get ex
 ### Per-gateway overrides
 
 ```ruby
-config.enable :pay_gateway, arc_client: my_custom_arc
-config.enable :brc121_gateway, wallet: alt_wallet
+config.enable :pay_gateway, arc_client: my_custom_arc  # override ARC broadcaster
+config.enable :brc121_gateway, wallet: alt_wallet      # override wallet
 ```
 
 ### Manual gateway construction (power-user escape hatch)
@@ -97,7 +126,7 @@ X402.configure do |config|
   config.domain = "api.example.com"
   config.gateways = [
     X402::BSV::PayGateway.new(
-      arc_client: BSV::Network::ARC.new("https://arc.taal.com", api_key: "..."),
+      arc_client: BSV::Network::ARC.default,
       wallet: my_wallet
     ),
     X402::BSV::BRC121Gateway.new(wallet: my_wallet)
@@ -130,9 +159,9 @@ Backwards-compat alternatives still work: `config.server_wif = ENV["SERVER_WIF"]
 
 Four BSV settlement schemes are supported:
 
-- **BSV-pay** (Coinbase v2 headers) — server broadcasts via ARC. Partial transaction template, unique derived addresses per payment.
+- **BSV-pay** (Coinbase v2 headers) — server broadcasts via ARC (defaults to GorillaPool Arcade). Partial transaction template, unique derived addresses per payment. Works without a wallet via `operator_wallet_url`.
 - **BRC-121** (BSV Association simple) — stateless, BRC-100 wallet-native, zero config.
-- **BRC-105** (BSV Association authenticated) — transitional; requires BRC-103 for spec compliance.
+- **BRC-105** (BSV Association authenticated) — settlement via `wallet.internalize_action`. Transitional; requires BRC-103 for spec compliance.
 - **BSV-proof** (merkleworks) — experimental; client broadcasts, server checks mempool.
 
 See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/](docs/) for full documentation.

@@ -367,5 +367,144 @@ RSpec.describe X402::BSV::PayGateway do
         expect(mock_worker).not_to have_received(:enqueue)
       end
     end
+
+    context "wallet relay (internalisation)" do
+      let(:mock_wallet) do
+        wallet = Object.new
+        # Gateway calls get_public_key with a positional Hash arg
+        wallet.define_singleton_method(:get_public_key) do |_args = {}|
+          privkey = BSV::Primitives::PrivateKey.generate
+          { public_key: privkey.public_key.to_hex }
+        end
+        wallet.define_singleton_method(:internalize_action) do |**_kwargs|
+          { "accepted" => true }
+        end
+        wallet
+      end
+
+      let(:wallet_gateway) do
+        described_class.new(
+          arc_client: mock_arc,
+          wallet: mock_wallet,
+          binding_mode: :permissive
+        )
+      end
+
+      def wallet_proof(gw_instance)
+        headers = gw_instance.challenge_headers(mock_request, route)
+        challenge = JSON.parse(Base64.strict_decode64(headers["Payment-Required"]))
+        accepted = challenge["accepts"].first
+        payee_hex = accepted["payTo"]
+        payee_script = BSV::Script::Script.from_hex(payee_hex)
+
+        tx = BSV::Transaction::Transaction.new
+        tx.add_output(BSV::Transaction::TransactionOutput.new(satoshis: 100, locking_script: payee_script))
+        tx.add_input(BSV::Transaction::TransactionInput.new(
+                       prev_tx_id: ["dd" * 32].pack("H*"),
+                       prev_tx_out_index: 0,
+                       unlocking_script: BSV::Script::Script.new("\x00".b)
+                     ))
+
+        payload = {
+          "x402Version" => 2,
+          "accepted" => accepted,
+          "payload" => {
+            "rawtx" => tx.to_binary.unpack1("H*"),
+            "txid" => tx.txid_hex
+          }
+        }
+
+        Base64.strict_encode64(JSON.generate(payload))
+      end
+
+      it "calls wallet.internalize_action after broadcast when wallet is present" do
+        called = false
+        mock_wallet.define_singleton_method(:internalize_action) do |**_kwargs|
+          called = true
+          { "accepted" => true }
+        end
+
+        proof = wallet_proof(wallet_gateway)
+        wallet_gateway.settle!("Payment-Signature", proof, mock_request, route)
+
+        expect(called).to be true
+      end
+
+      it "passes correct BRC-29 derivation params to internalize_action" do
+        received_args = nil
+        mock_wallet.define_singleton_method(:internalize_action) do |**kwargs|
+          received_args = kwargs
+          { "accepted" => true }
+        end
+
+        proof = wallet_proof(wallet_gateway)
+        wallet_gateway.settle!("Payment-Signature", proof, mock_request, route)
+
+        expect(received_args).not_to be_nil
+        expect(received_args[:description]).to eq("PayGateway payment")
+        expect(received_args[:tx]).to be_an(Array)
+
+        output = received_args[:outputs].first
+        expect(output[:output_index]).to eq(0)
+        expect(output[:protocol]).to eq("wallet payment")
+        remittance = output[:payment_remittance]
+        expect(remittance[:derivation_prefix]).to be_a(String)
+        expect(remittance[:derivation_prefix]).not_to be_empty
+        expect(remittance[:derivation_suffix]).to eq("0")
+        expect(remittance[:sender_identity_key]).to eq("anyone")
+      end
+
+      it "succeeds even when internalize_action raises" do
+        mock_wallet.define_singleton_method(:internalize_action) do |**_kwargs|
+          raise "wallet unreachable"
+        end
+
+        proof = wallet_proof(wallet_gateway)
+        result = wallet_gateway.settle!("Payment-Signature", proof, mock_request, route)
+
+        expect(result).to be_a(X402::SettlementResult)
+        expect(result.txid).not_to be_nil
+      end
+
+      it "includes derivation params in the challenge extra when wallet is present" do
+        headers = wallet_gateway.challenge_headers(mock_request, route)
+        challenge = JSON.parse(Base64.strict_decode64(headers["Payment-Required"]))
+        extra = challenge["accepts"].first["extra"]
+
+        expect(extra).to have_key("derivationPrefix")
+        expect(extra["derivationPrefix"]).to be_a(String)
+        expect(extra["derivationPrefix"]).not_to be_empty
+        expect(extra["derivationSuffix"]).to eq("0")
+      end
+
+      it "does not include derivation params in challenge extra without wallet" do
+        headers = gateway.challenge_headers(mock_request, route)
+        challenge = JSON.parse(Base64.strict_decode64(headers["Payment-Required"]))
+        extra = challenge["accepts"].first["extra"]
+
+        expect(extra).not_to have_key("derivationPrefix")
+        expect(extra).not_to have_key("derivationSuffix")
+      end
+
+      it "rejects a tampered derivationPrefix via HMAC" do
+        accepted = accepted_from_challenge(wallet_gateway)
+        accepted["extra"]["derivationPrefix"] = "tampered_prefix_value_000"
+        raw = { "x402Version" => 2, "accepted" => accepted,
+                "payload" => { "rawtx" => tx.to_binary.unpack1("H*"), "txid" => tx.txid_hex } }
+        payload = Base64.strict_encode64(JSON.generate(raw))
+        expect { wallet_gateway.settle!("Payment-Signature", payload, mock_request, route) }
+          .to raise_error(X402::VerificationError, /payTo signature mismatch/)
+      end
+
+      it "rejects a tampered derivationSuffix via HMAC" do
+        accepted = accepted_from_challenge(wallet_gateway)
+        accepted["extra"]["derivationSuffix"] = "tampered"
+        raw = { "x402Version" => 2, "accepted" => accepted,
+                "payload" => { "rawtx" => tx.to_binary.unpack1("H*"), "txid" => tx.txid_hex } }
+        payload = Base64.strict_encode64(JSON.generate(raw))
+        expect { wallet_gateway.settle!("Payment-Signature", payload, mock_request, route) }
+          .to raise_error(X402::VerificationError, /payTo signature mismatch/)
+      end
+    end
   end
 end

@@ -12,9 +12,9 @@ RSpec.describe X402::BSV::BRC105Gateway do
   let(:identity_key) { "02#{"ab" * 32}" }
   let(:key_deriver) { double("key_deriver", identity_key: identity_key) }
   let(:prefix_store) { X402::BSV::PrefixStore::Memory.new }
-  let(:arc_client) { double("arc_client") }
+  let(:wallet) { double("wallet") }
   let(:gateway) do
-    described_class.new(key_deriver: key_deriver, prefix_store: prefix_store, arc_client: arc_client)
+    described_class.new(key_deriver: key_deriver, prefix_store: prefix_store, wallet: wallet)
   end
   let(:route) { X402::Configuration::Route.new(http_method: "GET", path: "/premium", amount_sats: 1000) }
 
@@ -116,7 +116,7 @@ RSpec.describe X402::BSV::BRC105Gateway do
 
     it "raises 503 when prefix store is at capacity" do
       full_store = X402::BSV::PrefixStore::Memory.new(max_issued: 0)
-      full_gateway = described_class.new(key_deriver: key_deriver, prefix_store: full_store, arc_client: arc_client)
+      full_gateway = described_class.new(key_deriver: key_deriver, prefix_store: full_store, wallet: wallet)
 
       expect { full_gateway.challenge_headers(mock_request, route) }
         .to raise_error(X402::VerificationError, /at capacity/) { |e| expect(e.status).to eq(503) }
@@ -140,7 +140,7 @@ RSpec.describe X402::BSV::BRC105Gateway do
     let(:server_key) { BSV::Primitives::PrivateKey.generate }
     let(:real_key_deriver) { BSV::Wallet::KeyDeriver.new(server_key) }
     let(:real_gateway) do
-      described_class.new(key_deriver: real_key_deriver, prefix_store: prefix_store, arc_client: arc_client)
+      described_class.new(key_deriver: real_key_deriver, prefix_store: prefix_store, wallet: wallet)
     end
 
     let(:client_key) { BSV::Primitives::PrivateKey.generate }
@@ -193,7 +193,7 @@ RSpec.describe X402::BSV::BRC105Gateway do
 
     before do
       prefix_store.store!(prefix)
-      allow(arc_client).to receive(:broadcast).and_return({ "txid" => "aa" * 32 })
+      allow(wallet).to receive(:internalize_action).and_return({ accepted: true })
     end
 
     # §6.4 step 2: "Ensuring the output script pays to the correct derivation"
@@ -210,13 +210,25 @@ RSpec.describe X402::BSV::BRC105Gateway do
         expect(result.network).to eq("bsv:mainnet")
       end
 
-      it "broadcasts the transaction" do
+      it "calls wallet.internalize_action with correct derivation params" do
         transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
         payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
 
         real_gateway.settle!("x-bsv-payment", payload, request, route)
 
-        expect(arc_client).to have_received(:broadcast)
+        expect(wallet).to have_received(:internalize_action).with(
+          tx: an_instance_of(Array),
+          outputs: [hash_including(
+            output_index: 0,
+            protocol: "wallet payment",
+            payment_remittance: {
+              derivation_prefix: prefix,
+              derivation_suffix: suffix,
+              sender_identity_key: client_identity_key
+            }
+          )],
+          description: "BRC-105 payment"
+        )
       end
     end
 
@@ -347,15 +359,15 @@ RSpec.describe X402::BSV::BRC105Gateway do
       end
     end
 
-    # ARC broadcast failure (infrastructure, not spec-defined)
-    context "broadcast failure" do
-      it "raises 502 when ARC is unreachable" do
-        allow(arc_client).to receive(:broadcast).and_raise(StandardError, "network timeout")
+    # Wallet internalisation failure
+    context "internalisation failure" do
+      it "raises 402 when wallet.internalize_action fails" do
+        allow(wallet).to receive(:internalize_action).and_raise(StandardError, "wallet unavailable")
         transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
         payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
 
         expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-          .to raise_error(X402::VerificationError, /ARC broadcast failed/) { |e| expect(e.status).to eq(502) }
+          .to raise_error(X402::VerificationError, /payment internalisation failed/) { |e| expect(e.status).to eq(402) }
       end
     end
 

@@ -148,7 +148,7 @@ module X402
       def build_merkleworks_challenge(rack_request, route)
         config = X402.configuration
         required_sats = route.resolve_amount_sats
-        payee_hex = derive_payee_hex
+        payee_hex, = derive_payee_hex
 
         nonce = @nonce_provider.call(rack_request, payee: payee_hex, amount: required_sats)
 

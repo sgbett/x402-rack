@@ -72,12 +72,15 @@ module X402
         verify_accepted!(payload, required_sats)
         accepted_payee = payload.dig("accepted", "payTo")
         pay_to_sig = payload.dig("accepted", "extra", "payToSig")
-        verify_pay_to_signature!(accepted_payee, pay_to_sig)
+        prefix = payload.dig("accepted", "extra", "derivationPrefix")
+        suffix = payload.dig("accepted", "extra", "derivationSuffix")
+        verify_pay_to_signature!(accepted_payee, pay_to_sig, prefix, suffix)
         transaction = decode_transaction(payload)
         check_txid_unique!(transaction)
         verify_payment_output!(transaction, required_sats, accepted_payee)
         verify_binding!(transaction, rack_request)
         settle_transaction!(transaction, route)
+        relay_to_wallet(transaction, prefix, suffix)
         build_settlement_result(transaction)
       end
 
@@ -85,7 +88,7 @@ module X402
 
       def build_challenge(rack_request, route)
         required_sats = route.resolve_amount_sats
-        template, payee_hex = build_template(rack_request, required_sats)
+        template, payee_hex, prefix, suffix = build_template(rack_request, required_sats)
 
         # PayGateway includes OP_RETURN in the template (no fee delegation index issues)
         binding_hash = request_binding_hash(rack_request)
@@ -97,11 +100,20 @@ module X402
         {
           "x402Version" => 2,
           "resource" => { "url" => rack_request.path_info },
-          "accepts" => [build_accept_entry(payee_hex, required_sats, template)]
+          "accepts" => [build_accept_entry(payee_hex, required_sats, template, prefix, suffix)]
         }
       end
 
-      def build_accept_entry(payee_hex, required_sats, template)
+      def build_accept_entry(payee_hex, required_sats, template, prefix, suffix)
+        extra = {
+          "partialTx" => Base64.strict_encode64(template.to_binary),
+          "payToSig" => sign_pay_to(payee_hex, prefix, suffix)
+        }
+        if prefix
+          extra["derivationPrefix"] = prefix
+          extra["derivationSuffix"] = suffix
+        end
+
         {
           "scheme" => SCHEME,
           "network" => X402.configuration.network,
@@ -109,10 +121,7 @@ module X402
           "asset" => ASSET,
           "payTo" => payee_hex,
           "maxTimeoutSeconds" => DEFAULT_MAX_TIMEOUT_SECONDS,
-          "extra" => {
-            "partialTx" => Base64.strict_encode64(template.to_binary),
-            "payToSig" => sign_pay_to(payee_hex)
-          }
+          "extra" => extra
         }
       end
 
@@ -204,6 +213,36 @@ module X402
         raise VerificationError.new("ARC broadcast failed", status: 502)
       end
 
+      # Relay the settled transaction to the operator's wallet for tracking.
+      # This is a notification, not a gate — if it fails, the payment has
+      # already landed on-chain via ARC and settlement proceeds normally.
+      def relay_to_wallet(transaction, prefix, suffix)
+        return unless @wallet
+        return unless prefix
+
+        internalize_payment!(transaction, prefix, suffix)
+      rescue StandardError => e
+        logger.warn "[pay-gateway] wallet internalisation failed (non-fatal): #{e.class}: #{e.message}"
+      end
+
+      # Output 0 is always the payment output — built by build_template.
+      def internalize_payment!(transaction, prefix, suffix)
+        tx_bytes = transaction.to_binary.unpack("C*")
+        @wallet.internalize_action(
+          tx: tx_bytes,
+          outputs: [{
+            output_index: 0,
+            protocol: "wallet payment",
+            payment_remittance: {
+              derivation_prefix: prefix,
+              derivation_suffix: suffix,
+              sender_identity_key: "anyone"
+            }
+          }],
+          description: "PayGateway payment"
+        )
+      end
+
       def build_settlement_result(transaction)
         receipt = { "success" => true, "transaction" => transaction.txid_hex, "network" => X402.configuration.network }
         SettlementResult.new(
@@ -211,6 +250,10 @@ module X402
           txid: transaction.txid_hex,
           network: X402.configuration.network
         )
+      end
+
+      def logger
+        X402.configuration.logger
       end
     end
   end

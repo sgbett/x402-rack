@@ -21,17 +21,18 @@ module X402
     class BRC105Gateway
       PROTOCOL_ID = [2, "3241645161d8"].freeze
       PROOF_HEADER = "x-bsv-payment"
+      PROTOCOL = "wallet payment"
       COMPRESSED_PUBKEY_HEX = /\A0[23][0-9a-f]{64}\z/
       MAX_DERIVATION_BYTES = 64
       PRINTABLE_ASCII = /\A[\x20-\x7E]+\z/
 
       # @param key_deriver [BSV::Wallet::KeyDeriver] provides identity key + BRC-42 derivation
       # @param prefix_store [#store!, #valid?, #consume!] replay protection for derivation prefixes
-      # @param arc_client [#broadcast] ARC client for broadcasting transactions
-      def initialize(key_deriver:, prefix_store:, arc_client:)
+      # @param wallet [#internalize_action] BRC-100 wallet for payment internalisation
+      def initialize(key_deriver:, prefix_store:, wallet:)
         @key_deriver = key_deriver
         @prefix_store = prefix_store
-        @arc_client = arc_client
+        @wallet = wallet
       end
 
       # Issue a 402 challenge with BRC-105 headers.
@@ -69,7 +70,7 @@ module X402
         [PROOF_HEADER]
       end
 
-      # Verify and broadcast a BRC-105 payment.
+      # Verify and internalise a BRC-105 payment.
       #
       # @param _header_name [String] which proof header matched
       # @param proof_payload [String] raw header value
@@ -89,9 +90,15 @@ module X402
         expected_script = derive_payment_script(prefix, suffix, rack_request)
         log_expected_script(expected_script)
         log_tx_outputs(subject_tx, required_sats, expected_script)
-        paid_sats = verify_payment_output!(subject_tx, required_sats, expected_script)
+        paid_sats, output_index = verify_payment_output!(subject_tx, required_sats, expected_script)
         consume_prefix!(prefix)
-        broadcast!(subject_tx)
+        internalize_payment!(
+          transaction_b64: payment["transaction"],
+          output_index: output_index,
+          derivation_prefix: prefix,
+          derivation_suffix: suffix,
+          sender_identity_key: counterparty
+        )
         log_settlement_success(subject_tx, paid_sats, required_sats)
         build_settlement_result(subject_tx, paid_sats)
       end
@@ -182,31 +189,40 @@ module X402
       end
 
       def verify_payment_output!(transaction, required_sats, expected_script)
-        matching = transaction.outputs.find do |output|
-          output.locking_script == expected_script && output.satoshis >= required_sats
+        transaction.outputs.each_with_index do |output, i|
+          next unless output.locking_script == expected_script && output.satoshis >= required_sats
+
+          return [output.satoshis, i]
         end
 
-        unless matching
-          raise VerificationError.new(
-            "no output pays >= #{required_sats} sats to derived address", status: 402
-          )
-        end
-
-        matching.satoshis
+        raise VerificationError.new(
+          "no output pays >= #{required_sats} sats to derived address", status: 402
+        )
       end
 
-      def broadcast!(transaction)
-        @arc_client.broadcast(transaction)
+      def internalize_payment!(transaction_b64:, output_index:, derivation_prefix:, derivation_suffix:,
+                               sender_identity_key:)
+        tx_bytes = Base64.strict_decode64(transaction_b64).unpack("C*")
+        @wallet.internalize_action(
+          tx: tx_bytes,
+          outputs: [{
+            output_index: output_index,
+            protocol: PROTOCOL,
+            payment_remittance: {
+              derivation_prefix: derivation_prefix,
+              derivation_suffix: derivation_suffix,
+              sender_identity_key: sender_identity_key
+            }
+          }],
+          description: "BRC-105 payment"
+        )
+      rescue VerificationError
+        raise
       rescue StandardError => e
-        logger.error "[brc105] ARC broadcast error: #{e.class}: #{e.message}"
-        raise VerificationError.new("ARC broadcast failed: #{e.message}", status: 502)
+        logger.error "[brc105] internalize_action failed: #{e.class}: #{e.message}"
+        raise VerificationError.new("payment internalisation failed", status: 402)
       end
 
-      # NOTE: x-bsv-payment-satoshis-paid reflects the amount claimed in the
-      # BEEF transaction, verified against the derived payment script but set
-      # before ARC broadcast confirmation. It is not an on-chain-confirmed
-      # value. Downstream consumers requiring confirmed amounts should use
-      # the txid to query chain state independently.
       # --- Settlement logging (tagged [brc105]) ---
 
       def logger
