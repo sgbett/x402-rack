@@ -24,7 +24,7 @@ RSpec.describe "ProofGateway e2e with fee delegation", :e2e do
   let(:client_wif) { ENV.fetch("CLIENT_WIF") { skip "CLIENT_WIF not set" } }
   let(:delegator_wif) { ENV.fetch("DELEGATOR_WIF") { skip "DELEGATOR_WIF not set" } }
   let(:payee_script_hex) { ENV.fetch("PAYEE_SCRIPT") { skip "PAYEE_SCRIPT not set" } }
-  let(:arc_url) { ENV.fetch("ARC_URL", "https://arc-test.taal.com") }
+  let(:arc_url) { ENV.fetch("ARC_URL", "https://testnet.arcade.gorillapool.io") }
   let(:arc_api_key) { ENV.fetch("ARC_API_KEY") { skip "ARC_API_KEY not set" } }
 
   let(:treasury_key) { BSV::Primitives::PrivateKey.from_wif(treasury_wif) }

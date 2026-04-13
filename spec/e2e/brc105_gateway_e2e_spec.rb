@@ -5,7 +5,7 @@
 # Environment variables:
 #   SERVER_WIF       - server identity key in WIF format (testnet)
 #   CLIENT_WIF       - client wallet private key in WIF format (testnet)
-#   ARC_URL          - ARC endpoint (default: https://arc-test.taal.com)
+#   ARC_URL          - ARC endpoint (default: https://testnet.arcade.gorillapool.io)
 #   ARC_API_KEY      - ARC API key
 #
 # Two wallets:
@@ -26,7 +26,7 @@ require "bsv-wallet"
 RSpec.describe "BRC105Gateway e2e", :e2e do
   let(:server_wif) { ENV.fetch("SERVER_WIF") { skip "SERVER_WIF not set" } }
   let(:client_wif) { ENV.fetch("CLIENT_WIF") { skip "CLIENT_WIF not set" } }
-  let(:arc_url) { ENV.fetch("ARC_URL", "https://arc-test.taal.com") }
+  let(:arc_url) { ENV.fetch("ARC_URL", "https://testnet.arcade.gorillapool.io") }
   let(:arc_api_key) { ENV.fetch("ARC_API_KEY") { skip "ARC_API_KEY not set" } }
 
   let(:server_key) { BSV::Primitives::PrivateKey.from_wif(server_wif) }

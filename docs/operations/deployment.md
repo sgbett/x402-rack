@@ -13,7 +13,7 @@ X402.configure do |config|
 
   config.gateways = [
     X402::BSV::PayGateway.new(
-      arc_client: BSV::Network::ARC.new("https://arc.taal.com", api_key: "..."),
+      arc_client: BSV::Network::ARC.new("https://arcade.gorillapool.io", api_key: "..."),
       payee_locking_script_hex: "76a914...88ac"
     )
   ]
@@ -30,14 +30,13 @@ Both gateways need an ARC endpoint. The `bsv-sdk` provides `BSV::Network::ARC`:
 
 ```ruby
 arc = BSV::Network::ARC.new(
-  "https://arc.taal.com",
+  "https://arcade.gorillapool.io",
   api_key: "your-api-key"
 )
 ```
 
-- **Testnet**: `https://arc-test.taal.com`
-- **Mainnet**: `https://arc.taal.com`
-- **API key**: free for low volume at https://console.taal.com
+- **Testnet**: `https://testnet.arcade.gorillapool.io`
+- **Mainnet**: `https://arcade.gorillapool.io`
 
 ## Rate Limiting
 
@@ -90,5 +89,5 @@ arc = BSV::Network::ARC.new(
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ARC_URL` | Yes | ARC broadcast endpoint |
-| `ARC_API_KEY` | TAAL requires it | TAAL ARC API key |
+| `ARC_API_KEY` | Optional | ARCADE API key (if required by provider) |
 | `PAYEE_SCRIPT` | Yes | Payee locking script hex |

@@ -6,7 +6,7 @@
 #   rackup spec/e2e/config.ru -p 9292
 #
 # Environment variables:
-#   ARC_URL       - ARC endpoint (default: https://arc-test.taal.com)
+#   ARC_URL       - ARC endpoint (default: https://testnet.arcade.gorillapool.io)
 #   ARC_API_KEY   - ARC API key
 #   PAYEE_SCRIPT  - payee locking script hex (required)
 
@@ -14,7 +14,7 @@ require "bundler/setup"
 require "x402"
 require "x402/bsv"
 
-arc_url = ENV.fetch("ARC_URL", "https://arc-test.taal.com")
+arc_url = ENV.fetch("ARC_URL", "https://testnet.arcade.gorillapool.io")
 arc_api_key = ENV.fetch("ARC_API_KEY", nil)
 payee_script = ENV.fetch("PAYEE_SCRIPT") { raise "PAYEE_SCRIPT env var is required" }
 

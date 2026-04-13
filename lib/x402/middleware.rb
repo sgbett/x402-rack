@@ -12,15 +12,10 @@ module X402
   # to the matching gateway for settlement.
   #
   # @example config.ru
-  #   X402.configure do |config|
-  #     config.domain = "api.example.com"
-  #     config.server_wif = ENV["SERVER_WIF"]
-  #     config.arc_url = "https://arc.taal.com"
-  #     config.enable :pay_gateway
-  #     config.protect method: :GET, path: "/api/expensive", amount_sats: 100
-  #   end
-  #
+  #   X402.configure { |c| c.operator_wallet_url = "https://..." }
   #   use X402::Middleware
+  #
+  # @see X402::Configuration for full configuration options
   class Middleware
     # @param app [#call] next Rack app in the middleware stack
     def initialize(app)
