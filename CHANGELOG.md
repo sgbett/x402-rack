@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-04-13
+
+### Added
+
+- Node.js wallet server fixture and RemoteWallet adapter for e2e testing
+- Relay-mode config.ru for e2e PayGateway tests
+
+### Fixed
+
+- Accept BEEF (BRC-62) from client for wallet internalisation — BRC-100 wallets require BEEF, not raw tx bytes (#134)
+- Call `internalize_action` with positional Hash matching ProtoWallet convention (#137)
+- `RemoteWallet#get_public_key` calling convention mismatch with ProtoWallet interface
+- BRC-100 wallet compatibility for PayGateway relay (base64 derivation params, identity key)
+- Scope rescue in teardown to prevent health check spin
+
+### Changed
+
+- Bump bsv-sdk 0.11.0, bsv-wallet 0.7.0
+
 ## [0.8.0] - 2026-04-12
 
 ### Added
