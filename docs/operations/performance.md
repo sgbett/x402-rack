@@ -71,7 +71,7 @@ For high-traffic PayGateway deployments, consider HTTP connection pooling to ARC
 ```ruby
 # Use a persistent HTTP client
 http_client = Net::HTTP::Persistent.new
-arc = BSV::Network::ARC.new("https://arc.taal.com",
+arc = BSV::Network::ARC.new("https://arcade.gorillapool.io",
                             api_key: "...",
                             http_client: http_client)
 ```

@@ -31,7 +31,7 @@ end
 use X402::Middleware
 ```
 
-ARC defaults to GorillaPool Arcade. The server holds no private keys — it derives unique payment addresses from the remote wallet's public key, broadcasts via ARC, then relays the settlement to the wallet for UTXO tracking.
+ARC defaults to ARCADE. The server holds no private keys — it derives unique payment addresses from the remote wallet's public key, broadcasts via ARC, then relays the settlement to the wallet for UTXO tracking.
 
 ### With a local wallet (enables BRC-121)
 
@@ -60,7 +60,7 @@ end
 use X402::Middleware
 ```
 
-Both PayGateway and BRC121Gateway are auto-enabled. ARC defaults to GorillaPool Arcade.
+Both PayGateway and BRC121Gateway are auto-enabled. ARC defaults to ARCADE.
 
 ### With a remote wallet for all gateways
 
@@ -93,7 +93,7 @@ Clients can pay using whichever protocol they support; the middleware dispatches
 | `BRC105Gateway` (BRC-105) | Yes (local or remote) | `config.enable :brc105_gateway` | Transitional |
 | `ProofGateway` (merkleworks) | No | `config.enable :proof_gateway` | Experimental |
 
-PayGateway is the only gateway that works without a wallet — it derives payment addresses from the operator's public key and relays settlement after broadcast. BRC-121 and BRC-105 require a wallet for `internalize_action`. ARC defaults to GorillaPool Arcade when no explicit `arc_url` is configured.
+PayGateway is the only gateway that works without a wallet — it derives payment addresses from the operator's public key and relays settlement after broadcast. BRC-121 and BRC-105 require a wallet for `internalize_action`. ARC defaults to ARCADE when no explicit `arc_url` is configured.
 
 ## Advanced configuration
 
@@ -159,7 +159,7 @@ Backwards-compat alternatives still work: `config.server_wif = ENV["SERVER_WIF"]
 
 Four BSV settlement schemes are supported:
 
-- **BSV-pay** (Coinbase v2 headers) — server broadcasts via ARC (defaults to GorillaPool Arcade). Partial transaction template, unique derived addresses per payment. Works without a wallet via `operator_wallet_url`.
+- **BSV-pay** (Coinbase v2 headers) — server broadcasts via ARC (defaults to ARCADE). Partial transaction template, unique derived addresses per payment. Works without a wallet via `operator_wallet_url`.
 - **BRC-121** (BSV Association simple) — stateless, BRC-100 wallet-native, zero config.
 - **BRC-105** (BSV Association authenticated) — settlement via `wallet.internalize_action`. Transitional; requires BRC-103 for spec compliance.
 - **BSV-proof** (merkleworks) — experimental; client broadcasts, server checks mempool.

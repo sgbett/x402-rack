@@ -8,7 +8,7 @@
 #
 # Environment variables:
 #   CLIENT_WIF  - client wallet private key in WIF format (testnet)
-#   ARC_URL     - ARC endpoint (default: https://arc-test.taal.com)
+#   ARC_URL     - ARC endpoint (default: https://testnet.arcade.gorillapool.io)
 #   ARC_API_KEY - ARC API key
 #   WALLET_PORT - Node.js wallet port (default: 9494)
 #
@@ -59,7 +59,7 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
     skip "Node.js wallet server failed to start" unless wallet_ready
 
     # Set env vars before starting Rack — relay_config.ru reads them at boot
-    ENV["ARC_URL"] ||= "https://arc-test.taal.com"
+    ENV["ARC_URL"] ||= "https://testnet.arcade.gorillapool.io"
     ENV["OPERATOR_WALLET_URL"] = "http://localhost:#{@wallet_port}/api/server-wallet"
 
     @rack_server, @rack_thread, @rack_port = E2EHelper.start_server(

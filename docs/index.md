@@ -38,7 +38,7 @@ end
 use X402::Middleware
 ```
 
-PayGateway is auto-enabled. ARC defaults to GorillaPool Arcade. The server holds no private keys.
+PayGateway is auto-enabled. ARC defaults to ARCADE. The server holds no private keys.
 
 ### With a local wallet (enables BRC-121)
 
@@ -56,7 +56,7 @@ end
 use X402::Middleware
 ```
 
-Both PayGateway and BRC121Gateway are auto-enabled. ARC defaults to GorillaPool Arcade.
+Both PayGateway and BRC121Gateway are auto-enabled. ARC defaults to ARCADE.
 
 ### With a remote wallet for all gateways
 

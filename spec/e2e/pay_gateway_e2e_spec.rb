@@ -5,7 +5,7 @@
 # Environment variables:
 #   CLIENT_WIF       - client wallet private key in WIF format (testnet)
 #   PAYEE_SCRIPT     - payee locking script hex
-#   ARC_URL          - ARC endpoint (default: https://arc-test.taal.com)
+#   ARC_URL          - ARC endpoint (default: https://testnet.arcade.gorillapool.io)
 #   ARC_API_KEY      - ARC API key
 #
 # Run:
@@ -17,11 +17,11 @@ require_relative "e2e_logger"
 RSpec.describe "PayGateway e2e", :e2e do
   let(:client_wif) { ENV.fetch("CLIENT_WIF") { skip "CLIENT_WIF not set" } }
   let(:payee_script_hex) { ENV.fetch("PAYEE_SCRIPT") { skip "PAYEE_SCRIPT not set" } }
-  let(:arc_url) { ENV.fetch("ARC_URL", "https://arc-test.taal.com") }
+  let(:arc_url) { ENV.fetch("ARC_URL", "https://testnet.arcade.gorillapool.io") }
   let(:base_url) { "http://localhost:#{@port}" }
 
   before(:all) do
-    ENV["ARC_URL"] ||= "https://arc-test.taal.com"
+    ENV["ARC_URL"] ||= "https://testnet.arcade.gorillapool.io"
     ENV["PAYEE_SCRIPT"] ||= "76a914#{"00" * 20}88ac"
 
     @server, @thread, @port = E2EHelper.start_server(

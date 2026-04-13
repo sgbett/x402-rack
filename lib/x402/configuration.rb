@@ -6,12 +6,10 @@ require_relative "remote_wallet"
 module X402
   # DSL for configuring X402 middleware, gateways, and protected routes.
   #
-  # @example Minimal configuration
+  # @example Minimal configuration (relay mode — no keys on server)
   #   X402.configure do |config|
   #     config.domain = "api.example.com"
-  #     config.server_wif = ENV["SERVER_WIF"]
-  #     config.arc_url = "https://arc.taal.com"
-  #     config.enable :pay_gateway
+  #     config.operator_wallet_url = "https://my-wallet.example.com/api/server-wallet"
   #     config.protect method: :GET, path: "/api/expensive", amount_sats: 100
   #   end
   class Configuration
@@ -396,7 +394,7 @@ module X402
       enable(:pay_gateway) if arc_available?
     end
 
-    # Always true — ARC.default (GorillaPool Arcade) is available even
+    # Always true — ARC.default (ARCADE) is available even
     # when no explicit arc_url is configured. PayGateway is auto-enabled
     # whenever a wallet is present.
     def arc_available?
@@ -407,7 +405,7 @@ module X402
       if arc_url && !arc_url.empty?
         ::BSV::Network::ARC.new(arc_url, api_key: arc_api_key)
       else
-        logger.info "[x402] using default ARC broadcaster (GorillaPool Arcade)"
+        logger.info "[x402] using default ARC broadcaster (ARCADE)"
         ::BSV::Network::ARC.default(testnet: @network == "bsv:testnet")
       end
     end
