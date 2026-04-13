@@ -376,7 +376,7 @@ RSpec.describe X402::BSV::PayGateway do
           privkey = BSV::Primitives::PrivateKey.generate
           { public_key: privkey.public_key.to_hex }
         end
-        wallet.define_singleton_method(:internalize_action) do |**_kwargs|
+        wallet.define_singleton_method(:internalize_action) do |_args = {}|
           { "accepted" => true }
         end
         wallet
@@ -424,7 +424,7 @@ RSpec.describe X402::BSV::PayGateway do
 
       it "calls wallet.internalize_action after broadcast when wallet is present" do
         called = false
-        mock_wallet.define_singleton_method(:internalize_action) do |**_kwargs|
+        mock_wallet.define_singleton_method(:internalize_action) do |_args = {}|
           called = true
           { "accepted" => true }
         end
@@ -437,8 +437,8 @@ RSpec.describe X402::BSV::PayGateway do
 
       it "passes correct BRC-29 derivation params to internalize_action" do
         received_args = nil
-        mock_wallet.define_singleton_method(:internalize_action) do |**kwargs|
-          received_args = kwargs
+        mock_wallet.define_singleton_method(:internalize_action) do |args = {}|
+          received_args = args
           { "accepted" => true }
         end
 
@@ -463,7 +463,7 @@ RSpec.describe X402::BSV::PayGateway do
       end
 
       it "succeeds even when internalize_action raises" do
-        mock_wallet.define_singleton_method(:internalize_action) do |**_kwargs|
+        mock_wallet.define_singleton_method(:internalize_action) do |_args = {}|
           raise "wallet unreachable"
         end
 

@@ -241,19 +241,19 @@ module X402
                    else
                      transaction.to_binary.unpack("C*")
                    end
-        @wallet.internalize_action(
-          tx: tx_bytes,
-          outputs: [{
-            output_index: 0,
-            protocol: "wallet payment",
-            payment_remittance: {
-              derivation_prefix: prefix,
-              derivation_suffix: suffix,
-              sender_identity_key: sender_key
-            }
-          }],
-          description: "PayGateway payment"
-        )
+        @wallet.internalize_action({
+                                     tx: tx_bytes,
+                                     outputs: [{
+                                       output_index: 0,
+                                       protocol: "wallet payment",
+                                       payment_remittance: {
+                                         derivation_prefix: prefix,
+                                         derivation_suffix: suffix,
+                                         sender_identity_key: sender_key
+                                       }
+                                     }],
+                                     description: "PayGateway payment"
+                                   })
       end
 
       def build_settlement_result(transaction)

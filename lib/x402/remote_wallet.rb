@@ -53,17 +53,19 @@ module X402
 
     # Relay a settled payment to the remote wallet for internalisation.
     #
-    # @param tx [Array<Integer>] transaction bytes
-    # @param outputs [Array<Hash>] output descriptors with derivation metadata
-    # @param description [String] human-readable description
+    # Matches ProtoWallet interface: accepts a positional Hash of arguments.
+    # Also supports keyword arguments for convenience.
+    #
+    # @param args [Hash] arguments hash (ProtoWallet style)
     # @return [Hash] the wallet's response
-    def internalize_action(tx:, outputs:, description: "") # rubocop:disable Naming/MethodParameterName
-      output = outputs.first || {}
+    def internalize_action(args = {}, **kwargs)
+      args = kwargs unless kwargs.empty?
+      output = args[:outputs]&.first || {}
       remittance = output[:payment_remittance] || {}
 
       body = {
-        tx: tx,
-        description: description,
+        tx: args[:tx],
+        description: args[:description] || "",
         senderIdentityKey: remittance[:sender_identity_key],
         derivationPrefix: remittance[:derivation_prefix],
         derivationSuffix: remittance[:derivation_suffix],
