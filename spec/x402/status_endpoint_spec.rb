@@ -111,6 +111,8 @@ RSpec.describe X402::StatusEndpoint do
       end
     end
 
+    # Duck-type test — verifies the status endpoint works with any
+    # wallet implementing get_public_key, not RemoteWallet's internals.
     context "with RemoteWallet mock" do
       let(:remote_wallet_mock) do
         hex = test_pubkey_hex

@@ -3,7 +3,6 @@
 require "json"
 require "rack"
 require "bsv-sdk"
-require "bsv-wallet"
 
 module X402
   # Read-only HTTP status endpoint for the x402-rack middleware.
@@ -98,6 +97,12 @@ module X402
       wallet = config.shared_wallet
       return identity_missing unless wallet
 
+      # Lazy require — bsv-wallet may not be loaded yet if the wallet
+      # was constructed externally (e.g. RemoteWallet from operator_wallet_url).
+      require "bsv-wallet"
+
+      # Positional hash, not kwargs — ProtoWallet's signature is
+      # (args, originator:) and Ruby 3.4 strict separation breaks kwargs.
       result = wallet.get_public_key({ identity_key: true })
       hex = result.is_a?(Hash) ? (result[:public_key] || result["publicKey"]) : result
       address = ::BSV::Primitives::PublicKey.from_hex(hex).address
