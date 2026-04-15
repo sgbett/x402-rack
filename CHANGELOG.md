@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-04-16
+
+### Added
+
+- BRC105Gateway and BRC121Gateway now broadcast payment BEEF to ARC before internalisation, enforcing the "no credit without on-chain settlement" invariant (#148)
+- Configuration auto-injects `shared_arc_client` into BRC105Gateway and BRC121Gateway (same pattern as PayGateway)
+- ARC broadcast is idempotent — both client and server can broadcast the same tx safely
+
+### Changed
+
+- Status endpoint resolves identity via `shared_wallet.get_public_key` instead of parsing `server_wif` directly — works with local wallets, remote wallets, and WIF-backed proto-wallets (#143)
+- Status endpoint error messages are now wallet-agnostic
+
+### Dependencies
+
+- Requires `bsv-sdk` with `broadcast_beef` support (sgbett/bsv-ruby-sdk@88799c0)
+- Bump rake 13.3.1 → 13.4.1, yard 0.9.39 → 0.9.40
+
 ## [0.9.1] - 2026-04-13
 
 ### Fixed
