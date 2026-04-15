@@ -603,6 +603,29 @@ RSpec.describe X402::Configuration do
           X402::ConfigurationError, /brc105_gateway: unknown option.*:bad_opt/
         )
       end
+
+      it "injects shared_arc_client when auto-enabled" do
+        config.enable :brc105_gateway, key_deriver: key_deriver
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@arc_client)).to eq(arc_double)
+      end
+
+      it "allows per-gateway arc_client override" do
+        custom_arc = instance_double("BSV::Network::ARC")
+        config.enable :brc105_gateway, key_deriver: key_deriver, arc_client: custom_arc
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@arc_client)).to eq(custom_arc)
+      end
+
+      it "accepts arc_client in BRC105_GATEWAY_KNOWN_OPTS" do
+        custom_arc = instance_double("BSV::Network::ARC")
+        config.enable :brc105_gateway, key_deriver: key_deriver, arc_client: custom_arc
+        expect { config.validate! }.not_to raise_error
+      end
     end
 
     context "BRC121Gateway" do
@@ -650,6 +673,32 @@ RSpec.describe X402::Configuration do
         expect { config.validate! }.to raise_error(
           X402::ConfigurationError, /brc121_gateway: unknown option.*:bad_opt/
         )
+      end
+
+      it "injects shared_arc_client when auto-enabled" do
+        config.wallet = wallet
+        config.enable :brc121_gateway
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@arc_client)).to eq(arc_double)
+      end
+
+      it "allows per-gateway arc_client override" do
+        custom_arc = instance_double("BSV::Network::ARC")
+        config.wallet = wallet
+        config.enable :brc121_gateway, arc_client: custom_arc
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@arc_client)).to eq(custom_arc)
+      end
+
+      it "accepts arc_client in BRC121_GATEWAY_KNOWN_OPTS" do
+        custom_arc = instance_double("BSV::Network::ARC")
+        config.wallet = wallet
+        config.enable :brc121_gateway, arc_client: custom_arc
+        expect { config.validate! }.not_to raise_error
       end
     end
 
