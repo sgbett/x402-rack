@@ -343,6 +343,85 @@ RSpec.describe X402::BSV::BRC121Gateway do
       end
     end
 
+    # ARC broadcast
+    context "ARC broadcast" do
+      let(:arc_client) { double("arc_client") }
+      let(:gateway) { described_class.new(wallet: wallet, txid_store: txid_store, arc_client: arc_client) }
+
+      before do
+        allow(arc_client).to receive(:broadcast_beef).and_return(double("response", txid: "abc123"))
+      end
+
+      it "broadcasts BEEF to ARC after validation" do
+        env = paid_request_env(beef_b64: beef_b64)
+        gateway.settle!("x-bsv-beef", nil, mock_request(env), route)
+
+        expected_bytes = Base64.strict_decode64(beef_b64)
+        expect(arc_client).to have_received(:broadcast_beef).with(expected_bytes)
+      end
+
+      it "rejects when ARC broadcast raises BroadcastError" do
+        allow(arc_client).to receive(:broadcast_beef)
+          .and_raise(BSV::Network::BroadcastError.new("double-spend detected", status_code: 409))
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.status).to eq(402)
+            expect(e.reason).to include("ARC broadcast failed")
+          }
+      end
+
+      it "rejects when ARC broadcast raises StandardError" do
+        allow(arc_client).to receive(:broadcast_beef).and_raise(StandardError, "connection refused")
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.status).to eq(402)
+          }
+      end
+
+      it "does not leak ARC error details in HTTP response" do
+        allow(arc_client).to receive(:broadcast_beef)
+          .and_raise(StandardError, "internal: /var/lib/arc/secret.key not found")
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.reason).not_to include("/var/lib")
+            expect(e.reason).to eq("payment broadcast failed")
+          }
+      end
+
+      it "skips broadcast when arc_client is nil" do
+        nil_arc_gateway = described_class.new(wallet: wallet, txid_store: txid_store)
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { nil_arc_gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }.not_to raise_error
+      end
+
+      it "succeeds when ARC returns SEEN_ON_NETWORK" do
+        allow(arc_client).to receive(:broadcast_beef)
+          .and_return(double("response", txid: "abc123", tx_status: "SEEN_ON_NETWORK"))
+        env = paid_request_env(beef_b64: beef_b64)
+        result = gateway.settle!("x-bsv-beef", nil, mock_request(env), route)
+        expect(result).to be_a(X402::SettlementResult)
+      end
+
+      it "calls broadcast_to_arc! before internalize_payment!" do
+        env = paid_request_env(beef_b64: beef_b64)
+        expect(arc_client).to receive(:broadcast_beef).ordered
+        expect(wallet).to receive(:internalize_action).ordered.and_return(accepted: true)
+        gateway.settle!("x-bsv-beef", nil, mock_request(env), route)
+      end
+
+      it "does not call internalize_payment! when broadcast fails" do
+        allow(arc_client).to receive(:broadcast_beef)
+          .and_raise(BSV::Network::BroadcastError.new("rejected", status_code: 400))
+        env = paid_request_env(beef_b64: beef_b64)
+        expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+          .to raise_error(X402::VerificationError)
+        expect(wallet).not_to have_received(:internalize_action)
+      end
+    end
+
     # §5 step 5: isMerge and acceptance checking on wallet result
     context "wallet internalization result checking (§5 step 5)" do
       it "rejects when wallet returns isMerge: true (symbol key)" do

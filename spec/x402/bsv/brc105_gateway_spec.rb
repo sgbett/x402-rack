@@ -359,6 +359,98 @@ RSpec.describe X402::BSV::BRC105Gateway do
       end
     end
 
+    # -----------------------------------------------------------------------
+    # ARC broadcast
+    # -----------------------------------------------------------------------
+    context "ARC broadcast" do
+      let(:arc_client) { double("arc_client") }
+      let(:arc_gateway) do
+        described_class.new(key_deriver: real_key_deriver, prefix_store: prefix_store, wallet: wallet,
+                            arc_client: arc_client)
+      end
+
+      before do
+        allow(arc_client).to receive(:broadcast_beef)
+      end
+
+      it "broadcasts BEEF to ARC after validation" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        arc_gateway.settle!("x-bsv-payment", payload, request, route)
+
+        expect(arc_client).to have_received(:broadcast_beef).with(an_instance_of(String))
+      end
+
+      it "rejects when ARC broadcast raises BroadcastError" do
+        allow(arc_client).to receive(:broadcast_beef)
+          .and_raise(BSV::Network::BroadcastError.new("tx rejected by network"))
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        expect { arc_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /ARC broadcast failed/) { |e| expect(e.status).to eq(402) }
+      end
+
+      it "rejects when ARC broadcast raises StandardError" do
+        allow(arc_client).to receive(:broadcast_beef)
+          .and_raise(StandardError, "connection reset")
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        expect { arc_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /payment broadcast failed/) { |e| expect(e.status).to eq(402) }
+      end
+
+      it "does not leak ARC error details in HTTP response" do
+        allow(arc_client).to receive(:broadcast_beef)
+          .and_raise(StandardError, "internal ARC token xyz-secret expired")
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        expect { arc_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError) { |e|
+            expect(e.message).not_to include("xyz-secret")
+            expect(e.message).to eq("payment broadcast failed")
+          }
+      end
+
+      it "skips broadcast when arc_client is nil" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        # real_gateway has no arc_client — should succeed without broadcast
+        result = real_gateway.settle!("x-bsv-payment", payload, request, route)
+        expect(result).to be_a(X402::SettlementResult)
+      end
+
+      it "succeeds when ARC returns SEEN_ON_NETWORK (idempotent)" do
+        # broadcast_beef returns normally for SEEN_ON_NETWORK — no error raised
+        allow(arc_client).to receive(:broadcast_beef).and_return(double("response", txid: "abc123"))
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        result = arc_gateway.settle!("x-bsv-payment", payload, request, route)
+        expect(result).to be_a(X402::SettlementResult)
+      end
+
+      it "calls broadcast before internalize" do
+        call_order = []
+        allow(arc_client).to receive(:broadcast_beef) { call_order << :broadcast }
+        allow(wallet).to receive(:internalize_action) do
+          call_order << :internalize
+          { accepted: true }
+        end
+
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        arc_gateway.settle!("x-bsv-payment", payload, request, route)
+
+        expect(call_order).to eq(%i[broadcast internalize])
+      end
+    end
+
     # Wallet internalisation failure
     context "internalisation failure" do
       it "raises 402 when wallet.internalize_action fails" do
