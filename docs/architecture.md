@@ -34,8 +34,9 @@ The boundary test: could someone write `X402::EVM::Gateway` implementing this in
 ### Built-in Gateways
 
 - **`X402::BSV::PayGateway`** — Coinbase v2 headers, server broadcasts via ARC. See [schemes/bsv-pay.md](schemes/bsv-pay.md).
+- **`X402::BSV::BRC121Gateway`** — BRC-121 simple payments, stateless, BRC-100 wallet-native. See [schemes/brc-121.md](schemes/brc-121.md).
+- **`X402::BSV::BRC105Gateway`** — BRC-105 authenticated payments, BRC-29 derived addresses, AtomicBEEF transactions. See [schemes/brc-105.md](schemes/brc-105.md).
 - **`X402::BSV::ProofGateway`** — merkleworks headers, client broadcasts, server checks mempool. See [schemes/bsv-proof.md](schemes/bsv-proof.md).
-- **`X402::BSV::BRC105Gateway`** — BSV Association `x-bsv-*` headers, BRC-29 derived addresses, AtomicBEEF transactions. See [schemes/brc-105.md](schemes/brc-105.md).
 
 ## Payment Content Negotiation
 
@@ -44,15 +45,16 @@ Different x402 ecosystems use different HTTP headers. A server can send **multip
 | Scheme | Challenge headers | Proof header | Receipt header |
 |--------|------------------|--------------|----------------|
 | BSV-pay (ours) | `Payment-Required` | `Payment-Signature` | `Payment-Response` |
-| BSV-proof (merkleworks) | `X402-Challenge` | `X402-Proof` | — |
+| BRC-121 (BSV Association) | `x-bsv-payment-satoshis-required`, `x-bsv-payment-version` | `x-bsv-beef` | `x-bsv-payment-satoshis-paid` |
 | BRC-105 (BSV Association) | `x-bsv-payment-satoshis-required`, `x-bsv-payment-derivation-prefix`, `x-bsv-payment-identity-key`* | `x-bsv-payment` | `x-bsv-payment-result` |
+| BSV-proof (merkleworks) | `X402-Challenge` | `X402-Proof` | — |
 
 \* `x-bsv-payment-identity-key` is omitted when BRC-103 middleware is present upstream.
 
 Header namespaces are reserved per ecosystem:
 - `Payment-*` — Coinbase v2 / our PayGateway
+- `x-bsv-*` — BRC-121 and BRC-105 / BSV Association (our BRC121Gateway and BRC105Gateway)
 - `X402-*` — merkleworks / our ProofGateway
-- `x-bsv-*` — BRC-105 / BSV Association (our BRC105Gateway)
 
 ## Transaction Models
 
