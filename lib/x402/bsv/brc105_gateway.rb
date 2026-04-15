@@ -149,7 +149,10 @@ module X402
         return unless @arc_client
 
         beef_bytes = Base64.strict_decode64(transaction_b64)
-        @arc_client.broadcast_beef(beef_bytes)
+        response = @arc_client.broadcast_beef(beef_bytes)
+        logger.debug "[brc105] ARC broadcast OK: txStatus=#{response.tx_status}" if response.respond_to?(:tx_status)
+      rescue VerificationError
+        raise
       rescue ::BSV::Network::BroadcastError => e
         raise VerificationError.new("ARC broadcast failed: #{e.message}", status: 402)
       rescue StandardError => e
