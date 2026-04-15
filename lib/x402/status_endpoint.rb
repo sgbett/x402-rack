@@ -3,6 +3,7 @@
 require "json"
 require "rack"
 require "bsv-sdk"
+require "bsv-wallet"
 
 module X402
   # Read-only HTTP status endpoint for the x402-rack middleware.
@@ -14,7 +15,7 @@ module X402
   #
   # @example Enable in configuration
   #   X402.configure do |c|
-  #     c.server_wif = ENV["SERVER_WIF"]
+  #     c.wallet = my_wallet  # any BRC-100 compatible wallet
   #     c.enable_status_endpoint
   #     # c.status_endpoint_token = ENV["X402_STATUS_TOKEN"] # explicit (recommended in prod)
   #     # c.status_endpoint_path  = "/_x402/status"          # default
@@ -85,39 +86,45 @@ module X402
       }
     end
 
+    # Resolves the server's identity (public key + address) via the
+    # shared wallet's +get_public_key(identity_key: true)+ interface.
+    #
+    # Returns a hash with +:public_key+, +:address+, and +:address_note+.
+    # Degrades gracefully when no wallet is configured or the wallet
+    # raises an error — never crashes the endpoint.
+    #
+    # @return [Hash]
     def identity_data
-      key, status = identity_private_key
-      case status
-      when :ok
-        {
-          public_key: key.public_key.to_hex,
-          address: key.public_key.address,
-          address_note: ADDRESS_NOTE
-        }
-      when :missing
-        {
-          public_key: nil,
-          address: nil,
-          address_note: "server_wif is not configured — no identity available."
-        }
-      when :invalid
-        {
-          public_key: nil,
-          address: nil,
-          address_note: "server_wif is set but failed to parse — check the configured value."
-        }
-      end
+      wallet = config.shared_wallet
+      return identity_missing unless wallet
+
+      result = wallet.get_public_key({ identity_key: true })
+      hex = result.is_a?(Hash) ? (result[:public_key] || result["publicKey"]) : result
+      address = ::BSV::Primitives::PublicKey.from_hex(hex).address
+
+      {
+        public_key: hex,
+        address: address,
+        address_note: ADDRESS_NOTE
+      }
+    rescue StandardError
+      identity_invalid
     end
 
-    # @return [Array(BSV::Primitives::PrivateKey, Symbol)] tuple of
-    #   parsed key (or nil) and status: +:ok+, +:missing+, or +:invalid+
-    def identity_private_key
-      wif = config.server_wif
-      return [nil, :missing] if wif.nil? || wif.empty?
+    def identity_missing
+      {
+        public_key: nil,
+        address: nil,
+        address_note: "No wallet configured — identity not available."
+      }
+    end
 
-      [::BSV::Primitives::PrivateKey.from_wif(wif), :ok]
-    rescue ArgumentError
-      [nil, :invalid]
+    def identity_invalid
+      {
+        public_key: nil,
+        address: nil,
+        address_note: "Wallet is configured but identity key could not be resolved — check wallet configuration."
+      }
     end
 
     def response_headers(content_type)

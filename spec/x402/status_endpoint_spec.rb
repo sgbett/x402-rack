@@ -240,7 +240,7 @@ RSpec.describe X402::StatusEndpoint do
       status, _headers, body = app.call(authed_env("/_x402/status"))
       expect(status).to eq(200)
       expect(body.first).to include("(not configured)")
-      expect(body.first).to include("server_wif is not configured")
+      expect(body.first).to include("No wallet configured")
     end
   end
 
@@ -262,7 +262,7 @@ RSpec.describe X402::StatusEndpoint do
       status, _headers, body = app.call(authed_env("/_x402/status"))
       expect(status).to eq(200)
       expect(body.first).to include("(not configured)")
-      expect(body.first).to include("server_wif is set but failed to parse")
+      expect(body.first).to include("identity key could not be resolved")
     end
   end
 
