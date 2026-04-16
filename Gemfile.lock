@@ -4,7 +4,7 @@ PATH
     x402-rack (0.11.0)
       base64 (~> 0.2)
       bsv-sdk (>= 0.12.1, < 1.0)
-      bsv-wallet (>= 0.5.0, < 1.0)
+      bsv-wallet (>= 0.9.1, < 1.0)
       json-canonicalization (~> 1.0)
       rack (~> 3.0)
 
@@ -18,9 +18,9 @@ GEM
     bigdecimal (4.1.1)
     bsv-sdk (0.12.1)
       mcp (~> 0.12)
-    bsv-wallet (0.9.0)
+    bsv-wallet (0.9.1)
       base64 (~> 0.2)
-      bsv-sdk (>= 0.11.0, < 1.0)
+      bsv-sdk (>= 0.12.1, < 1.0)
     capybara (3.40.0)
       addressable
       matrix
