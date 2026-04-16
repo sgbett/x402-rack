@@ -2,6 +2,7 @@
 
 require "base64"
 require "bsv-sdk"
+require_relative "network_visibility"
 require_relative "txid_store"
 
 module X402
@@ -65,9 +66,19 @@ module X402
       #   +#get_public_key(identity_key: true)+ for the server identity key.
       # @param txid_store [#record_if_unseen!, nil] replay protection for
       #   settled txids. Defaults to +X402::BSV::TxidStore::Memory.new+.
-      def initialize(wallet:, txid_store: nil)
+      # @param arc_client [#status, nil] ARC client used to confirm the
+      #   payment txid is visible on the BSV network before the wallet
+      #   internalises it. When +nil+ (backward compatibility), the
+      #   visibility check is skipped entirely.
+      # @param network_visibility_cache [NetworkVisibility::Cache, nil]
+      #   per-gateway positive-only TTL cache shielding ARC from
+      #   duplicate-submission bursts. Defaults to a fresh
+      #   +NetworkVisibility::Cache.new+.
+      def initialize(wallet:, txid_store: nil, arc_client: nil, network_visibility_cache: nil)
         @wallet = wallet
         @txid_store = txid_store || TxidStore::Memory.new
+        @arc_client = arc_client
+        @network_visibility_cache = network_visibility_cache || NetworkVisibility::Cache.new
       end
 
       # Issue a 402 challenge with BRC-121 headers.
@@ -111,6 +122,8 @@ module X402
         check_txid_unique!(subject_tx.txid_hex)
 
         paid_sats = verify_payment_output!(subject_tx, output_index, required_sats)
+
+        verify_visibility!(subject_tx.txid_hex)
 
         result = internalize_payment!(
           beef_b64: headers["x-bsv-beef"],
@@ -212,6 +225,29 @@ module X402
         return if @txid_store.record_if_unseen!(txid)
 
         raise VerificationError.new("replay: transaction already settled", status: 402)
+      end
+
+      # Confirm the payment txid is visible on the BSV network before we
+      # mutate wallet state. A structurally valid BEEF proves nothing about
+      # whether the client actually broadcast — only ARC observation does.
+      # Raising here (VerificationError 402 on "not visible", 503 on ARC
+      # outage) keeps the exploit path in
+      # +spec/e2e/brc121_gateway_e2e_spec.rb+ from ever reaching
+      # +internalize_action+.
+      #
+      # When +@arc_client+ is nil we skip the check for backward
+      # compatibility — runtime wiring of ARC + kill-switch semantics lives
+      # in +Configuration+, not in this gateway.
+      def verify_visibility!(txid)
+        return unless @arc_client
+
+        NetworkVisibility.verify!(
+          arc_client: @arc_client,
+          txid: txid,
+          cache: @network_visibility_cache,
+          logger: logger,
+          visible_statuses: NetworkVisibility::VISIBLE_STATUSES
+        )
       end
 
       def verify_payment_output!(transaction, output_index, required_sats)
