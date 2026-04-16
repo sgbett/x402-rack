@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-04-16
+
+### Removed
+
+- Gateway-level ARC broadcast added in 0.10.0 — broadcast is the wallet's responsibility via the `broadcaster:` parameter on `WalletClient`, not the gateway's. By the time the BEEF arrives at the gateway, the client's wallet should have already broadcast. If the client used `no_send: true` without broadcasting, the correct response is to reject (optionally via an `arc_client.status(txid)` read), not to paper over client misconfiguration by re-broadcasting on their behalf (#155)
+- `broadcast_to_arc!` method from BRC105Gateway and BRC121Gateway
+- `arc_client:` constructor parameter from BRC105Gateway and BRC121Gateway
+- Configuration auto-injection of `arc_client` into BRC105Gateway and BRC121Gateway
+
+### Fixed
+
+- 0.10.0 depended on an unreleased `broadcast_beef` method on `BSV::Network::ARC`, making all BRC-121 and BRC-105 settlements fail with `NoMethodError` against any released `bsv-sdk`
+
 ## [0.10.0] - 2026-04-16
 
 ### Added

@@ -29,12 +29,10 @@ module X402
       # @param key_deriver [BSV::Wallet::KeyDeriver] provides identity key + BRC-42 derivation
       # @param prefix_store [#store!, #valid?, #consume!] replay protection for derivation prefixes
       # @param wallet [#internalize_action] BRC-100 wallet for payment internalisation
-      # @param arc_client [BSV::Network::ARC, nil] optional ARC client for broadcasting BEEF
-      def initialize(key_deriver:, prefix_store:, wallet:, arc_client: nil)
+      def initialize(key_deriver:, prefix_store:, wallet:)
         @key_deriver = key_deriver
         @prefix_store = prefix_store
         @wallet = wallet
-        @arc_client = arc_client
       end
 
       # Issue a 402 challenge with BRC-105 headers.
@@ -94,7 +92,6 @@ module X402
         log_tx_outputs(subject_tx, required_sats, expected_script)
         paid_sats, output_index = verify_payment_output!(subject_tx, required_sats, expected_script)
         consume_prefix!(prefix)
-        broadcast_to_arc!(payment["transaction"])
         internalize_payment!(
           transaction_b64: payment["transaction"],
           output_index: output_index,
@@ -143,21 +140,6 @@ module X402
         return if @prefix_store.consume!(prefix)
 
         raise VerificationError.new("replay: derivation prefix already consumed or unknown", status: 400)
-      end
-
-      def broadcast_to_arc!(transaction_b64)
-        return unless @arc_client
-
-        beef_bytes = Base64.strict_decode64(transaction_b64)
-        response = @arc_client.broadcast_beef(beef_bytes)
-        logger.debug "[brc105] ARC broadcast OK: txStatus=#{response.tx_status}" if response.respond_to?(:tx_status)
-      rescue VerificationError
-        raise
-      rescue ::BSV::Network::BroadcastError => e
-        raise VerificationError.new("ARC broadcast failed: #{e.message}", status: 402)
-      rescue StandardError => e
-        logger.error "[brc105] ARC broadcast error: #{e.class}: #{e.message}"
-        raise VerificationError.new("payment broadcast failed", status: 402)
       end
 
       def parse_beef_transaction(transaction_b64)

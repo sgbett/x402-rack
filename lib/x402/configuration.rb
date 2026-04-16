@@ -37,10 +37,10 @@ module X402
     ].freeze
 
     BRC105_GATEWAY_KNOWN_OPTS = %i[
-      wallet key_deriver server_wif server_key prefix_store arc_client
+      wallet key_deriver server_wif server_key prefix_store
     ].freeze
 
-    BRC121_GATEWAY_KNOWN_OPTS = %i[wallet txid_store arc_client].freeze
+    BRC121_GATEWAY_KNOWN_OPTS = %i[wallet txid_store].freeze
 
     GATEWAY_REGISTRY = {
       pay_gateway: "X402::BSV::PayGateway",
@@ -490,8 +490,7 @@ module X402
       klass.new(
         key_deriver: key_deriver,
         prefix_store: options[:prefix_store] || X402::BSV::PrefixStore::Memory.new,
-        wallet: wallet,
-        arc_client: options[:arc_client] || shared_arc_client
+        wallet: wallet
       )
     end
 
@@ -503,7 +502,7 @@ module X402
               "brc121_gateway requires wallet: (or top-level config.wallet =)"
       end
 
-      opts = { wallet: wallet, arc_client: options[:arc_client] || shared_arc_client }
+      opts = { wallet: wallet }
       opts[:txid_store] = options[:txid_store] if options.key?(:txid_store)
       klass.new(**opts)
     end
