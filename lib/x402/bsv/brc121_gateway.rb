@@ -150,7 +150,10 @@ module X402
       private
 
       def server_identity_key
-        result = @wallet.get_public_key(identity_key: true)
+        # Positional hash, not kwargs — WalletClient's signature is
+        # (args, originator:) and Ruby 3.4 strict hash/kwargs separation
+        # rejects the bare-kwargs form. Same idiom as status_endpoint.rb.
+        result = @wallet.get_public_key({ identity_key: true })
         result.is_a?(Hash) ? (result[:public_key] || result["publicKey"]) : result
       end
 

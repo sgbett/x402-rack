@@ -49,12 +49,14 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
 
   # Real ARC broadcaster — wrapped in an rspec spy so the exploit path can
   # assert `not_to receive(:broadcast)` without replacing the broadcast path
-  # entirely (the happy path still needs real broadcasting).
+  # entirely (the happy path still needs real broadcasting). ARC's public
+  # surface is `broadcast`, `broadcast_many`, `status` — there is no
+  # `broadcast_beef` method (the gateway layer no longer broadcasts BEEF;
+  # see #155).
   let(:real_arc) { BSV::Network::ARC.new(arc_url, api_key: arc_api_key) }
   let(:broadcaster) do
     spy = instance_double(BSV::Network::ARC)
     allow(spy).to receive(:broadcast) { |*args, **kwargs| real_arc.broadcast(*args, **kwargs) }
-    allow(spy).to receive(:broadcast_beef) { |*args, **kwargs| real_arc.broadcast_beef(*args, **kwargs) }
     allow(spy).to receive(:broadcast_many) { |*args, **kwargs| real_arc.broadcast_many(*args, **kwargs) }
     spy
   end
@@ -156,7 +158,7 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       E2ELogger.wallets(
         client_addr: client_key.public_key.address(network: :testnet)
       )
-      server_identity_key_hex = server_wallet.get_public_key(identity_key: true).fetch(:public_key)
+      server_identity_key_hex = server_wallet.get_public_key({ identity_key: true }).fetch(:public_key)
       E2ELogger.emit "  🖥  Server identity   #{server_identity_key_hex[0..20]}..."
       E2ELogger.emit ""
 
@@ -221,7 +223,7 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       E2ELogger.separator
 
       # Step 4: Locate the payment output vout (auto-fund shuffles outputs)
-      subject_tx = BSV::Transaction::Beef.from_binary(beef_bytes).find_transaction(result[:txid])
+      subject_tx = BSV::Transaction::Beef.from_binary(beef_bytes).find_transaction([result[:txid]].pack("H*"))
       vout = subject_tx.outputs.index { |o| o.satoshis == amount && o.locking_script.to_hex == payment_script.to_hex }
       expect(vout).not_to be_nil
 
@@ -292,7 +294,7 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       log_path = E2ELogger.start_log("brc121-gateway-e2e-exploit")
       E2ELogger.header("BRC121Gateway — Exploit Path (TDD guard for #158)")
 
-      server_identity_key_hex = server_wallet.get_public_key(identity_key: true).fetch(:public_key)
+      server_identity_key_hex = server_wallet.get_public_key({ identity_key: true }).fetch(:public_key)
 
       E2ELogger.wallets(
         client_addr: client_key.public_key.address(network: :testnet)
@@ -324,7 +326,6 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
 
       # Pre-assert the broadcaster is untouched on this path.
       expect(broadcaster).not_to receive(:broadcast)
-      expect(broadcaster).not_to receive(:broadcast_beef)
       expect(broadcaster).not_to receive(:broadcast_many)
 
       result = client_wallet.create_action({
@@ -344,7 +345,7 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       beef_bytes = result[:tx].pack("C*")
       beef_b64 = Base64.strict_encode64(beef_bytes)
 
-      subject_tx = BSV::Transaction::Beef.from_binary(beef_bytes).find_transaction(result[:txid])
+      subject_tx = BSV::Transaction::Beef.from_binary(beef_bytes).find_transaction([result[:txid]].pack("H*"))
       vout = subject_tx.outputs.index { |o| o.satoshis == amount && o.locking_script.to_hex == payment_script.to_hex }
 
       E2ELogger.result("Txid", result[:txid])
@@ -412,7 +413,7 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
                                            })
 
       beef_bytes = result[:tx].pack("C*")
-      subject_tx = BSV::Transaction::Beef.from_binary(beef_bytes).find_transaction(result[:txid])
+      subject_tx = BSV::Transaction::Beef.from_binary(beef_bytes).find_transaction([result[:txid]].pack("H*"))
       vout = subject_tx.outputs.index { |o| o.satoshis == amount && o.locking_script.to_hex == payment_script.to_hex }
 
       {
@@ -424,7 +425,7 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       }
     end
 
-    let(:server_identity_key_hex) { server_wallet.get_public_key(identity_key: true).fetch(:public_key) }
+    let(:server_identity_key_hex) { server_wallet.get_public_key({ identity_key: true }).fetch(:public_key) }
 
     it "rejects a stale x-bsv-time outside the 30s freshness window" do
       proof = build_valid_proof(

@@ -14,7 +14,7 @@ RSpec.describe X402::BSV::BRC121Gateway do
   # Mock BRC-100 wallet: supports get_public_key and internalize_action.
   let(:wallet) do
     w = double("wallet")
-    allow(w).to receive(:get_public_key).with(identity_key: true).and_return(public_key: server_identity_key)
+    allow(w).to receive(:get_public_key).with({ identity_key: true }).and_return(public_key: server_identity_key)
     allow(w).to receive(:internalize_action).and_return(accepted: true)
     w
   end
@@ -80,7 +80,7 @@ RSpec.describe X402::BSV::BRC121Gateway do
 
     it "accepts wallets whose get_public_key returns a bare string" do
       bare_wallet = double("wallet")
-      allow(bare_wallet).to receive(:get_public_key).with(identity_key: true).and_return(server_identity_key)
+      allow(bare_wallet).to receive(:get_public_key).with({ identity_key: true }).and_return(server_identity_key)
       bare_gateway = described_class.new(wallet: bare_wallet, txid_store: txid_store)
       expect(bare_gateway.challenge_headers(mock_request, route)["x-bsv-server"]).to eq(server_identity_key)
     end
