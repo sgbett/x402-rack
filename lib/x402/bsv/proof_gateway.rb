@@ -47,13 +47,6 @@ module X402
         MINED
       ].freeze
 
-      # Mempool polling retry schedule. ARC typically returns an
-      # intermediate status (RECEIVED, STORED, SENT_TO_NETWORK) for a
-      # brief window after broadcast before progressing to
-      # SEEN_ON_NETWORK. A short retry loop absorbs that race without
-      # adding stateful polling infrastructure.
-      MEMPOOL_RETRY_DELAYS_SECONDS = [0.25, 0.5, 1.0].freeze
-
       # @param nonce_provider [#call] callable returning nonce UTXO hash;
       #   receives (rack_request, payee:, amount:) kwargs.
       #   Profile B providers include :partial_tx (binary) in the response.
@@ -61,14 +54,19 @@ module X402
       # @param payee_locking_script_hex [String, nil] payee script (falls back to config)
       # @param challenge_store [#store!, #lookup, #consume!] per-instance
       #   challenge cache (default: in-memory, per-process).
+      # @param network_visibility_cache [NetworkVisibility::Cache, nil]
+      #   per-gateway positive-only TTL cache shielding ARC from
+      #   duplicate-submission bursts. Defaults to a fresh
+      #   +NetworkVisibility::Cache.new+.
       def initialize(nonce_provider:, arc_client:,
                      payee_locking_script_hex: nil, wallet: nil, challenge_secret: nil,
-                     challenge_store: nil)
+                     challenge_store: nil, network_visibility_cache: nil)
         super(payee_locking_script_hex: payee_locking_script_hex, wallet: wallet,
               challenge_secret: challenge_secret)
         @nonce_provider = nonce_provider
         @arc_client = arc_client
         @challenge_store = challenge_store || ChallengeStore::Memory.new
+        @network_visibility_cache = network_visibility_cache || NetworkVisibility::Cache.new
       end
 
       # Build a 402 challenge with merkleworks +X402-Challenge+ header.
@@ -262,30 +260,42 @@ module X402
         raise VerificationError.new("no output pays >= #{required_sats} sats to payee", status: 402)
       end
 
-      # Poll ARC for the tx status, retrying briefly to absorb the
-      # propagation lag between broadcast and SEEN_ON_NETWORK. Returns
-      # on the first acceptable status; raises if no attempt succeeds.
+      # Confirm ARC has observed the settlement transaction.
+      #
+      # Delegates to +NetworkVisibility.verify!+ so retry policy, cache
+      # shape, and fault classification are shared with the BRC-121 /
+      # BRC-105 gateways. ProofGateway's +ACCEPTABLE_MEMPOOL_STATUSES+
+      # (8 values including +RECEIVED+, +STORED+,
+      # +ANNOUNCED_TO_NETWORK+, ...) answers a deliberately different
+      # question from the helper's default 3-value list: "is this tx
+      # propagating after MY broadcast?" rather than "has the client's
+      # tx actually landed on the network?". The list is passed as
+      # +visible_statuses:+ to keep both questions answerable through
+      # the same mechanic.
+      #
+      # Rescues and rewraps the helper's +VerificationError+ to
+      # preserve the operator-facing "mempool" wording. The status
+      # code is preserved verbatim — client fault surfaces as 402,
+      # ARC outage as 503 (previously 502; see CHANGELOG).
       def check_mempool!(txid)
-        attempts = MEMPOOL_RETRY_DELAYS_SECONDS.length + 1
-        last_status = nil
-
-        attempts.times do |i|
-          last_status = @arc_client.status(txid).tx_status
-          break if ACCEPTABLE_MEMPOOL_STATUSES.include?(last_status)
-
-          sleep(MEMPOOL_RETRY_DELAYS_SECONDS[i]) if i < MEMPOOL_RETRY_DELAYS_SECONDS.length
-        end
-
-        return if ACCEPTABLE_MEMPOOL_STATUSES.include?(last_status)
-
-        raise VerificationError.new(
-          "transaction not yet visible in mempool (last status: #{last_status || "unknown"})",
-          status: 402
+        NetworkVisibility.verify!(
+          arc_client: @arc_client,
+          txid: txid,
+          cache: @network_visibility_cache,
+          visible_statuses: ACCEPTABLE_MEMPOOL_STATUSES
         )
-      rescue VerificationError
-        raise
-      rescue StandardError
-        raise VerificationError.new("mempool check failed", status: 502)
+      rescue VerificationError => e
+        raise VerificationError.new(mempool_error_message(e), status: e.status)
+      end
+
+      def mempool_error_message(error)
+        case error.status
+        when 503
+          "mempool check failed — #{error.reason}"
+        else
+          last_status = error.reason[/last status: (.+?)\)\z/, 1] || "unknown"
+          "transaction not yet visible in mempool (last status: #{last_status})"
+        end
       end
     end
   end

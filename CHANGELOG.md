@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `ProofGateway#check_mempool!` now delegates to `X402::BSV::NetworkVisibility.verify!`, sharing the retry policy, positive-only TTL cache, and fault classification with BRC-121 / BRC-105 gateways. The 8-value `ACCEPTABLE_MEMPOOL_STATUSES` whitelist is preserved verbatim and passed as `visible_statuses:` — ProofGateway's "is my broadcast propagating?" semantics are unchanged (#165).
+- ARC outages observed by `ProofGateway` now surface as `VerificationError(status: 503)` where previously they surfaced as `502`. This aligns the operator-facing status across all gateways: every ARC outage is a 503 regardless of which gateway was in the path. Callers that explicitly branched on `status == 502` must update to `503`.
+
+### Removed
+
+- `ProofGateway::MEMPOOL_RETRY_DELAYS_SECONDS` constant — retry timing is now owned by `X402::BSV::NetworkVisibility::RETRY_DELAYS_SECONDS`.
+
 ## [0.10.1] - 2026-04-16
 
 ### Removed

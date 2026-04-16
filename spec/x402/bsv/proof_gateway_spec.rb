@@ -216,13 +216,13 @@ RSpec.describe X402::BSV::ProofGateway do
         .to raise_error(X402::VerificationError) { |e| expect(e.status).to eq(402) }
     end
 
-    it "raises when mempool check fails" do
+    it "surfaces ARC outage as VerificationError(status: 503)" do
       # Zero out retry delays so the spec doesn't wait in real time.
-      stub_const("#{described_class}::MEMPOOL_RETRY_DELAYS_SECONDS", [].freeze)
+      stub_const("X402::BSV::NetworkVisibility::RETRY_DELAYS_SECONDS", [].freeze)
 
       failing_arc = Object.new
       def failing_arc.status(_txid)
-        raise "connection refused"
+        raise SocketError, "connection refused"
       end
 
       failing_gw = described_class.new(
@@ -254,11 +254,11 @@ RSpec.describe X402::BSV::ProofGateway do
       proof_header2 = X402::Base64Url.encode(JSON.generate(proof_data))
 
       expect { failing_gw.settle!("X402-Proof", proof_header2, request, route) }
-        .to raise_error(X402::VerificationError, /mempool/)
+        .to raise_error(X402::VerificationError, /mempool/) { |e| expect(e.status).to eq(503) }
     end
 
     it "retries the mempool check until ARC reports an acceptable status" do
-      stub_const("#{described_class}::MEMPOOL_RETRY_DELAYS_SECONDS", [0.0, 0.0, 0.0].freeze)
+      stub_const("X402::BSV::NetworkVisibility::RETRY_DELAYS_SECONDS", [0.0, 0.0, 0.0].freeze)
 
       # ARC first reports UNKNOWN (the tx hasn't been observed yet),
       # then SEEN_ON_NETWORK on the next poll. The gateway should
@@ -299,7 +299,7 @@ RSpec.describe X402::BSV::ProofGateway do
     end
 
     it "surfaces the last observed tx_status when all retries fail" do
-      stub_const("#{described_class}::MEMPOOL_RETRY_DELAYS_SECONDS", [0.0].freeze)
+      stub_const("X402::BSV::NetworkVisibility::RETRY_DELAYS_SECONDS", [0.0].freeze)
 
       arc_stub = Object.new
       def arc_stub.status(_txid)
