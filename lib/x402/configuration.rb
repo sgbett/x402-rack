@@ -38,11 +38,11 @@ module X402
 
     BRC105_GATEWAY_KNOWN_OPTS = %i[
       wallet key_deriver server_wif server_key prefix_store
-      arc_client network_visibility_cache
+      arc_client
     ].freeze
 
     BRC121_GATEWAY_KNOWN_OPTS = %i[
-      wallet txid_store arc_client network_visibility_cache
+      wallet txid_store arc_client
     ].freeze
 
     GATEWAY_REGISTRY = {
@@ -63,16 +63,10 @@ module X402
     attr_accessor :domain, :payee_locking_script_hex, :gateways,
                   :arc_url, :arc_api_key, :arc_client, :server_wif, :wallet,
                   :operator_wallet_url, :exchange_rate_provider, :logger,
-                  :status_endpoint_path, :status_endpoint_token,
-                  :verify_on_chain
+                  :status_endpoint_path, :status_endpoint_token
     attr_reader :routes, :gateway_specs, :network
 
     DEFAULT_STATUS_ENDPOINT_PATH = "/_x402/status"
-
-    # ENV values that disable on-chain verification. Anything else
-    # (including unset) leaves the safe default of +true+. Whitespace is
-    # trimmed, comparison is case-insensitive.
-    VERIFY_ON_CHAIN_FALSY = %w[false 0 no].freeze
 
     def initialize
       @routes = []
@@ -83,7 +77,6 @@ module X402
       @status_endpoint_enabled = false
       @status_endpoint_path = DEFAULT_STATUS_ENDPOINT_PATH
       @status_endpoint_token = nil
-      @verify_on_chain = verify_on_chain_default?
     end
 
     # Opt in to the read-only status endpoint at +status_endpoint_path+
@@ -122,17 +115,6 @@ module X402
       logger.formatter = proc { |_sev, _time, _prog, msg| "#{msg}\n" }
       logger.level = ::Logger::DEBUG
       logger
-    end
-
-    # Resolve the initial value for +verify_on_chain+. ENV disables are
-    # honoured at construction; explicit +config.verify_on_chain = true+
-    # in a configure block beats an ENV-set +false+ because it runs
-    # after +initialize+. Unknown / unset values keep the safe default.
-    def verify_on_chain_default?
-      raw = ENV.fetch("X402_VERIFY_ON_CHAIN", nil)
-      return true if raw.nil?
-
-      !VERIFY_ON_CHAIN_FALSY.include?(raw.to_s.strip.downcase)
     end
 
     public
@@ -314,23 +296,10 @@ module X402
     end
 
     def warn_operational_concerns!
-      warn_verify_on_chain_disabled!
       return if gateway_specs.empty? # gateways= was used directly — specs not relevant
 
       warn_ephemeral_challenge_secret!
       warn_in_memory_prefix_store!
-    end
-
-    # Loudly surface the "no on-chain verification" escape hatch at
-    # startup. The default is +true+; this only fires when an operator
-    # has explicitly opted out (config block or +X402_VERIFY_ON_CHAIN+
-    # env). Dev/staging convenience; production deployments must leave
-    # this on.
-    def warn_verify_on_chain_disabled!
-      return if @verify_on_chain
-
-      logger.warn "[x402] verify_on_chain is disabled — NO PAY → NO CONTENT is NOT enforced. " \
-                  "Do not run in production."
     end
 
     def warn_ephemeral_challenge_secret!
@@ -525,9 +494,8 @@ module X402
         key_deriver: key_deriver,
         prefix_store: options[:prefix_store] || X402::BSV::PrefixStore::Memory.new,
         wallet: wallet,
-        arc_client: resolve_gateway_arc_client(options)
+        arc_client: options[:arc_client] || shared_arc_client
       }
-      opts[:network_visibility_cache] = options[:network_visibility_cache] if options.key?(:network_visibility_cache)
       klass.new(**opts)
     end
 
@@ -539,25 +507,9 @@ module X402
               "brc121_gateway requires wallet: (or top-level config.wallet =)"
       end
 
-      opts = { wallet: wallet, arc_client: resolve_gateway_arc_client(options) }
+      opts = { wallet: wallet, arc_client: options[:arc_client] || shared_arc_client }
       opts[:txid_store] = options[:txid_store] if options.key?(:txid_store)
-      opts[:network_visibility_cache] = options[:network_visibility_cache] if options.key?(:network_visibility_cache)
       klass.new(**opts)
-    end
-
-    # Resolve the +arc_client+ to hand to a BRC-121/BRC-105 gateway.
-    #
-    # Option A kill-switch (see #164): when +verify_on_chain+ is
-    # disabled we pass +nil+, which trips the gateway's
-    # +return unless @arc_client+ short-circuit and skips the
-    # NetworkVisibility check entirely. Cheaper and less invasive than
-    # threading a dedicated +verify_on_chain:+ kwarg through every
-    # gateway constructor, and it reuses the backward-compat path
-    # already shipped in #162/#163.
-    def resolve_gateway_arc_client(options)
-      return nil unless @verify_on_chain
-
-      options[:arc_client] || shared_arc_client
     end
 
     # -- Option validation ---------------------------------------------------
