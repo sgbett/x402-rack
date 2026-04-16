@@ -6,6 +6,14 @@ require "base64"
 require "bsv-sdk"
 require "x402/bsv/network_visibility"
 
+# NO PAY -> NO CONTENT: this gateway serves content if and only if the
+# payment transaction is visible on the BSV network. The invariant is
+# enforced by +#verify_visibility!+ (below), which runs after payment
+# output verification but BEFORE +consume_prefix!+ and
+# +internalize_action+ — the ordering matters for retry semantics. See
+# README "What x402-rack guarantees" and +X402::BSV::NetworkVisibility+
+# for the shared retry / cache / 402-vs-503 classification.
+
 module X402
   module BSV
     # BRC-105 gateway for BSV settlement-gated HTTP.

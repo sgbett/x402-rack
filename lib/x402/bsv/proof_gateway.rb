@@ -9,6 +9,14 @@ require_relative "../protocol/challenge"
 require_relative "../protocol/proof"
 require_relative "../verification/protocol_checks"
 
+# NO PAY -> NO CONTENT: this gateway serves content if and only if the
+# payment transaction is visible on the BSV network. The invariant is
+# enforced by +#check_mempool!+ (below), which delegates to
+# +X402::BSV::NetworkVisibility.verify!+ — the same helper used by the
+# BRC-121 and BRC-105 gateways. ProofGateway deliberately passes a
+# broader +visible_statuses+ whitelist because it is verifying a tx it
+# has itself broadcast via ARC. See README "What x402-rack guarantees".
+
 module X402
   module BSV
     # Merkleworks x402 compatible gateway.

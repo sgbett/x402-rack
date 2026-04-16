@@ -2,6 +2,13 @@
 
 require "monitor"
 
+# NO PAY -> NO CONTENT: this module is the single point at which the
+# invariant is enforced. Gateways call +verify!+ between validation and
+# any state mutation so a structurally valid but unbroadcast BEEF
+# cannot settle. See README "What x402-rack guarantees". Failures are
+# classified as 402 (client never broadcast) or 503 (ARC outage /
+# network fault) — never as generic 5xx.
+
 module X402
   module BSV
     # Centralised "is this txid visible on the BSV network via ARC?" check.
