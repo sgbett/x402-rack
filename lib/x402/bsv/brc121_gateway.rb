@@ -65,10 +65,9 @@ module X402
       #   +#get_public_key(identity_key: true)+ for the server identity key.
       # @param txid_store [#record_if_unseen!, nil] replay protection for
       #   settled txids. Defaults to +X402::BSV::TxidStore::Memory.new+.
-      def initialize(wallet:, txid_store: nil, arc_client: nil)
+      def initialize(wallet:, txid_store: nil)
         @wallet = wallet
         @txid_store = txid_store || TxidStore::Memory.new
-        @arc_client = arc_client
       end
 
       # Issue a 402 challenge with BRC-121 headers.
@@ -112,8 +111,6 @@ module X402
         check_txid_unique!(subject_tx.txid_hex)
 
         paid_sats = verify_payment_output!(subject_tx, output_index, required_sats)
-
-        broadcast_to_arc!(headers["x-bsv-beef"])
 
         result = internalize_payment!(
           beef_b64: headers["x-bsv-beef"],
@@ -226,21 +223,6 @@ module X402
         end
 
         output.satoshis
-      end
-
-      def broadcast_to_arc!(beef_b64)
-        return unless @arc_client
-
-        beef_bytes = Base64.strict_decode64(beef_b64)
-        response = @arc_client.broadcast_beef(beef_bytes)
-        logger.debug "[brc121] ARC broadcast OK: txStatus=#{response.tx_status}" if response.respond_to?(:tx_status)
-      rescue VerificationError
-        raise
-      rescue ::BSV::Network::BroadcastError => e
-        raise VerificationError.new("ARC broadcast failed: #{e.message}", status: 402)
-      rescue StandardError => e
-        logger.error "[brc121] ARC broadcast error: #{e.class}: #{e.message}"
-        raise VerificationError.new("payment broadcast failed", status: 402)
       end
 
       def internalize_payment!(beef_b64:, output_index:, derivation_prefix:, derivation_suffix:, sender_identity_key:)
