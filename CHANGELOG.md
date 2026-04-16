@@ -5,11 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.2] - 2026-04-16
 
 ### Fixed
 
 - **NO PAY → NO CONTENT invariant is now enforced at the gateway layer.** `BRC121Gateway` and `BRC105Gateway` verify on-chain visibility via ARC before `internalize_action`, closing the `no_send` exploit window left open by 0.10.0 / 0.10.1. A structurally valid BEEF that was never broadcast now receives `402 Payment Required` ("payment transaction not visible on the BSV network") instead of a 200 with content served. Closes #148; completes #158.
+- `BRC121Gateway#server_identity_key` now calls `@wallet.get_public_key({ identity_key: true })` with a positional hash rather than kwargs, matching `BSV::Wallet::WalletClient`'s `(args, originator:)` signature. Ruby 3.4 strict hash/kwargs separation rejected the previous kwargs form on any real `WalletClient` — BRC-121 challenges would fail in production even though unit tests passed against mock doubles.
 
 ### Added
 
