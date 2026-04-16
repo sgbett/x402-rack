@@ -383,5 +383,98 @@ RSpec.describe X402::BSV::BRC105Gateway do
           .to raise_error(X402::VerificationError, /missing client identity key/) { |e| expect(e.status).to eq(401) }
       end
     end
+
+    # On-chain visibility verification guards against the `no_send` exploit:
+    # a structurally valid BEEF that was never broadcast. The helper
+    # +X402::BSV::NetworkVisibility+ is wired in between payment-output
+    # verification and prefix consumption so a legitimate retry after a
+    # re-broadcast can still consume the prefix.
+    context "on-chain visibility verification" do
+      let(:arc_client) { instance_double(BSV::Network::ARC) }
+      let(:gateway_with_arc) do
+        described_class.new(
+          key_deriver: real_key_deriver,
+          prefix_store: prefix_store,
+          wallet: wallet,
+          arc_client: arc_client
+        )
+      end
+
+      def status_response(status)
+        Struct.new(:txid, :tx_status).new(nil, status)
+      end
+
+      it "succeeds and consumes the prefix when ARC reports SEEN_ON_NETWORK" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+        allow(arc_client).to receive(:status).with(transaction.txid_hex)
+                                             .and_return(status_response("SEEN_ON_NETWORK"))
+
+        result = gateway_with_arc.settle!("x-bsv-payment", payload, request, route)
+
+        expect(result).to be_a(X402::SettlementResult)
+        expect(prefix_store.valid?(prefix)).to be false
+      end
+
+      it "raises VerificationError(402) matching 'not visible' when ARC raises a no-status_code BroadcastError" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+        allow(arc_client).to receive(:status).with(transaction.txid_hex)
+                                             .and_raise(BSV::Network::BroadcastError.new("unknown"))
+
+        expect { gateway_with_arc.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /not visible/) { |e| expect(e.status).to eq(402) }
+      end
+
+      it "raises VerificationError(503) when ARC reports a 5xx outage" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+        allow(arc_client).to receive(:status).with(transaction.txid_hex)
+                                             .and_raise(BSV::Network::BroadcastError.new("boom", status_code: 500))
+
+        expect { gateway_with_arc.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError) { |e| expect(e.status).to eq(503) }
+      end
+
+      # Critical for retry semantics: if visibility fails, the prefix must
+      # remain available so a legitimate client can retry after broadcasting.
+      it "does NOT consume the prefix when visibility verification fails" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+        allow(arc_client).to receive(:status).with(transaction.txid_hex)
+                                             .and_raise(BSV::Network::BroadcastError.new("unknown"))
+        allow(prefix_store).to receive(:consume!).and_call_original
+
+        expect { gateway_with_arc.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError)
+
+        expect(prefix_store).not_to have_received(:consume!)
+        expect(prefix_store.valid?(prefix)).to be true
+      end
+
+      it "does NOT call wallet.internalize_action when visibility verification fails" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+        allow(arc_client).to receive(:status).with(transaction.txid_hex)
+                                             .and_raise(BSV::Network::BroadcastError.new("unknown"))
+
+        expect { gateway_with_arc.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError)
+
+        expect(wallet).not_to have_received(:internalize_action)
+      end
+
+      # Backward compatibility: gateways constructed without an arc_client
+      # skip visibility verification entirely. Kill-switch wiring via
+      # configuration is out of scope for this task (see #164).
+      it "skips visibility verification when no arc_client is supplied" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+
+        result = real_gateway.settle!("x-bsv-payment", payload, request, route)
+
+        expect(result).to be_a(X402::SettlementResult)
+      end
+    end
   end
 end

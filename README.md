@@ -4,6 +4,21 @@ Rack middleware for payment-gated HTTP using BSV (Bitcoin SV) and the [x402 prot
 
 The middleware is a pure dispatcher — it matches routes, issues payment challenges, and routes proofs to pluggable gateway backends for settlement. It has no blockchain knowledge and holds no keys.
 
+## What x402-rack guarantees
+
+> **x402-rack serves content if and only if the payment transaction is visible on the BSV network.**
+
+That is the whole job. Every gateway enforces the same invariant: after the BEEF has been parsed and the payment output verified, but **before** any wallet or replay state is mutated, the gateway asks ARC whether it has observed the transaction. A structurally valid BEEF is not proof of broadcast — only network observation is.
+
+Two failure modes are distinguished in the HTTP response:
+
+- **`402 Payment Required`** — the transaction is not visible on the network after bounded retries. The client has not broadcast (or broadcast to a different ARC, or attempted the `no_send` exploit). This is a client fault.
+- **`503 Service Unavailable`** — ARC is unreachable, timing out, or returning 5xx. This is an infrastructure fault; the payment may be legitimate but cannot be confirmed.
+
+**ARC is a hard runtime dependency in the critical path.** Operators should monitor ARC reachability and latency the same way they monitor their own database. If ARC is down, x402-rack will correctly refuse to serve paid content rather than risk a `no_send` bypass.
+
+The kill-switch `config.verify_on_chain = false` (or `X402_VERIFY_ON_CHAIN=false`) disables the check for dev and staging where wallets may be mocked. It defaults to `true` and logs a WARN at startup when disabled. Do not disable it in production.
+
 ## Installation
 
 ```ruby

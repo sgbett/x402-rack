@@ -1,5 +1,18 @@
 # Architecture
 
+## Core invariant
+
+> **x402-rack serves content if and only if the payment transaction is visible on the BSV network.**
+
+This is the one job. Every gateway enforces it at the same point in the settle flow: after the BEEF has been parsed and the payment output verified, but **before** any wallet or replay state is mutated. The check lives in `X402::BSV::NetworkVisibility.verify!` and is shared by `PayGateway`, `ProofGateway`, `BRC121Gateway`, and `BRC105Gateway`.
+
+Failures bifurcate cleanly in the HTTP response:
+
+- **402** — transaction not visible after bounded retries (client fault)
+- **503** — ARC unreachable / 5xx / timeout (infrastructure fault)
+
+See [schemes/brc-121.md](schemes/brc-121.md#verify-on-chain) and [schemes/brc-105.md](schemes/brc-105.md#verify-on-chain) for the per-gateway specifics.
+
 ## Middleware as Dispatcher (`X402::Middleware`)
 
 The Rack middleware is a **pure dispatcher** — the gatekeeper. It has no blockchain knowledge. It:
@@ -19,6 +32,7 @@ Gateways are pluggable backends that handle chain-specific settlement. They dele
 
 - Builds challenge data (including partial transaction templates)
 - Verifies and settles proofs
+- **Verifies on-chain visibility via ARC before mutating wallet state** (the NO PAY → NO CONTENT invariant)
 - Interacts with ARC and/or a treasury service via the BSV wallet
 
 ### Gateway Interface

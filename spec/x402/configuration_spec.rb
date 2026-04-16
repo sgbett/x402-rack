@@ -43,6 +43,104 @@ RSpec.describe X402::Configuration do
     config.protect(method: "GET", path: "/", amount_sats: 1)
   end
 
+  describe "#verify_on_chain" do
+    around do |example|
+      original = ENV.fetch("X402_VERIFY_ON_CHAIN", nil)
+      ENV.delete("X402_VERIFY_ON_CHAIN")
+      example.run
+      if original.nil?
+        ENV.delete("X402_VERIFY_ON_CHAIN")
+      else
+        ENV["X402_VERIFY_ON_CHAIN"] = original
+      end
+    end
+
+    it "defaults to true when no ENV override is set" do
+      expect(described_class.new.verify_on_chain).to be true
+    end
+
+    it "honours X402_VERIFY_ON_CHAIN=false" do
+      ENV["X402_VERIFY_ON_CHAIN"] = "false"
+      expect(described_class.new.verify_on_chain).to be false
+    end
+
+    it "honours X402_VERIFY_ON_CHAIN=0" do
+      ENV["X402_VERIFY_ON_CHAIN"] = "0"
+      expect(described_class.new.verify_on_chain).to be false
+    end
+
+    it "honours X402_VERIFY_ON_CHAIN=no" do
+      ENV["X402_VERIFY_ON_CHAIN"] = "no"
+      expect(described_class.new.verify_on_chain).to be false
+    end
+
+    it "treats X402_VERIFY_ON_CHAIN=true as true" do
+      ENV["X402_VERIFY_ON_CHAIN"] = "true"
+      expect(described_class.new.verify_on_chain).to be true
+    end
+
+    it "trims surrounding whitespace before parsing" do
+      ENV["X402_VERIFY_ON_CHAIN"] = "  false  "
+      expect(described_class.new.verify_on_chain).to be false
+    end
+
+    it "treats unknown values as truthy (safe default — ON)" do
+      ENV["X402_VERIFY_ON_CHAIN"] = "maybe"
+      expect(described_class.new.verify_on_chain).to be true
+    end
+
+    it "is case-insensitive" do
+      ENV["X402_VERIFY_ON_CHAIN"] = "FALSE"
+      expect(described_class.new.verify_on_chain).to be false
+    end
+
+    it "explicit config.verify_on_chain = true overrides ENV-set false" do
+      ENV["X402_VERIFY_ON_CHAIN"] = "false"
+      c = described_class.new
+      c.verify_on_chain = true
+      expect(c.verify_on_chain).to be true
+    end
+
+    it "explicit config.verify_on_chain = false overrides ENV-set true" do
+      ENV["X402_VERIFY_ON_CHAIN"] = "true"
+      c = described_class.new
+      c.verify_on_chain = false
+      expect(c.verify_on_chain).to be false
+    end
+
+    context "WARN at validate!" do
+      let(:captured_logger) do
+        l = instance_double(Logger)
+        allow(l).to receive(:warn)
+        allow(l).to receive(:info)
+        allow(l).to receive(:debug)
+        allow(l).to receive(:error)
+        l
+      end
+
+      before do
+        config.logger = captured_logger
+        valid_config(config)
+      end
+
+      it "emits a WARN when verify_on_chain is explicitly disabled" do
+        config.verify_on_chain = false
+        config.validate!
+
+        expect(captured_logger).to have_received(:warn)
+          .with(/verify_on_chain is disabled.*NO PAY.*NO CONTENT.*Do not run in production/)
+      end
+
+      it "does not emit the WARN when verify_on_chain is enabled" do
+        config.verify_on_chain = true
+        config.validate!
+
+        expect(captured_logger).not_to have_received(:warn)
+          .with(/verify_on_chain is disabled/)
+      end
+    end
+  end
+
   describe "#protect" do
     it "adds a route" do
       config.protect(method: "GET", path: "/api", amount_sats: 100)
@@ -603,6 +701,47 @@ RSpec.describe X402::Configuration do
           X402::ConfigurationError, /brc105_gateway: unknown option.*:bad_opt/
         )
       end
+
+      it "injects shared_arc_client when none is provided explicitly" do
+        config.enable :brc105_gateway, key_deriver: key_deriver
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@arc_client)).to eq(arc_double)
+      end
+
+      it "allows per-gateway arc_client override" do
+        custom_arc = instance_double("BSV::Network::ARC")
+        config.enable :brc105_gateway, key_deriver: key_deriver, arc_client: custom_arc
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@arc_client)).to eq(custom_arc)
+      end
+
+      it "accepts arc_client in BRC105_GATEWAY_KNOWN_OPTS" do
+        custom_arc = instance_double("BSV::Network::ARC")
+        config.enable :brc105_gateway, key_deriver: key_deriver, arc_client: custom_arc
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "accepts an explicit network_visibility_cache" do
+        cache = X402::BSV::NetworkVisibility::Cache.new
+        config.enable :brc105_gateway, key_deriver: key_deriver, network_visibility_cache: cache
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@network_visibility_cache)).to equal(cache)
+      end
+
+      it "passes arc_client: nil when verify_on_chain is disabled" do
+        config.verify_on_chain = false
+        config.enable :brc105_gateway, key_deriver: key_deriver
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@arc_client)).to be_nil
+      end
     end
 
     context "BRC121Gateway" do
@@ -650,6 +789,52 @@ RSpec.describe X402::Configuration do
         expect { config.validate! }.to raise_error(
           X402::ConfigurationError, /brc121_gateway: unknown option.*:bad_opt/
         )
+      end
+
+      it "injects shared_arc_client when none is provided explicitly" do
+        config.wallet = wallet
+        config.enable :brc121_gateway
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@arc_client)).to eq(arc_double)
+      end
+
+      it "allows per-gateway arc_client override" do
+        custom_arc = instance_double("BSV::Network::ARC")
+        config.wallet = wallet
+        config.enable :brc121_gateway, arc_client: custom_arc
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@arc_client)).to eq(custom_arc)
+      end
+
+      it "accepts arc_client in BRC121_GATEWAY_KNOWN_OPTS" do
+        custom_arc = instance_double("BSV::Network::ARC")
+        config.wallet = wallet
+        config.enable :brc121_gateway, arc_client: custom_arc
+        expect { config.validate! }.not_to raise_error
+      end
+
+      it "accepts an explicit network_visibility_cache" do
+        cache = X402::BSV::NetworkVisibility::Cache.new
+        config.wallet = wallet
+        config.enable :brc121_gateway, network_visibility_cache: cache
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@network_visibility_cache)).to equal(cache)
+      end
+
+      it "passes arc_client: nil when verify_on_chain is disabled" do
+        config.wallet = wallet
+        config.verify_on_chain = false
+        config.enable :brc121_gateway
+        config.validate!
+
+        gw = config.gateways.first
+        expect(gw.instance_variable_get(:@arc_client)).to be_nil
       end
     end
 

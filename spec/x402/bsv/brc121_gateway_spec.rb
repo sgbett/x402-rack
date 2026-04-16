@@ -387,5 +387,120 @@ RSpec.describe X402::BSV::BRC121Gateway do
         expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }.not_to raise_error
       end
     end
+
+    # Task #162: verify on-chain visibility via ARC before internalise.
+    # A structurally valid BEEF is not proof of broadcast — only ARC
+    # observation is. The helper (X402::BSV::NetworkVisibility) raises
+    # VerificationError(402) for a client-side "not visible" outcome and
+    # VerificationError(503) for ARC infrastructure faults; this gateway
+    # just wires it in between verify_payment_output! and
+    # internalize_payment!.
+    context "on-chain visibility check (task #162)" do
+      let(:arc_client) { instance_double(BSV::Network::ARC) }
+      let(:gateway) { described_class.new(wallet: wallet, txid_store: txid_store, arc_client: arc_client) }
+
+      def status_response(status)
+        Struct.new(:txid, :tx_status).new(nil, status)
+      end
+
+      context "when arc_client reports SEEN_ON_NETWORK" do
+        it "settles successfully and calls internalize_action" do
+          allow(arc_client).to receive(:status).and_return(status_response("SEEN_ON_NETWORK"))
+          env = paid_request_env(beef_b64: beef_b64)
+
+          result = gateway.settle!("x-bsv-beef", nil, mock_request(env), route)
+
+          expect(result).to be_a(X402::SettlementResult)
+          expect(wallet).to have_received(:internalize_action)
+        end
+      end
+
+      context "when the txid is never visible on ARC (exploit path)" do
+        it "raises VerificationError(402) with a 'not visible' reason" do
+          # BroadcastError with no status_code surfaces as 'unknown' across
+          # all retries — matches ARC's behaviour for a never-broadcast txid.
+          allow(arc_client).to receive(:status)
+            .and_raise(BSV::Network::BroadcastError.new("not found"))
+          env = paid_request_env(beef_b64: beef_b64)
+
+          expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+            .to raise_error(X402::VerificationError) { |e|
+              expect(e.status).to eq(402)
+              expect(e.reason).to match(/not visible/i)
+            }
+        end
+
+        it "does NOT call wallet.internalize_action (verify-before-internalise)" do
+          allow(arc_client).to receive(:status)
+            .and_raise(BSV::Network::BroadcastError.new("not found"))
+          env = paid_request_env(beef_b64: beef_b64)
+
+          expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+            .to raise_error(X402::VerificationError)
+
+          expect(wallet).not_to have_received(:internalize_action)
+        end
+      end
+
+      context "when ARC is unavailable (5xx)" do
+        it "raises VerificationError(503) with an outage reason" do
+          allow(arc_client).to receive(:status)
+            .and_raise(BSV::Network::BroadcastError.new("boom", status_code: 500))
+          env = paid_request_env(beef_b64: beef_b64)
+
+          expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+            .to raise_error(X402::VerificationError) { |e|
+              expect(e.status).to eq(503)
+              expect(e.reason).to match(/payment verification temporarily unavailable/i)
+            }
+        end
+
+        it "does NOT call wallet.internalize_action" do
+          allow(arc_client).to receive(:status)
+            .and_raise(BSV::Network::BroadcastError.new("boom", status_code: 500))
+          env = paid_request_env(beef_b64: beef_b64)
+
+          expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
+            .to raise_error(X402::VerificationError)
+
+          expect(wallet).not_to have_received(:internalize_action)
+        end
+      end
+
+      context "backward compatibility: no arc_client injected" do
+        let(:gateway) { described_class.new(wallet: wallet, txid_store: txid_store) }
+
+        it "skips the visibility check and proceeds to internalise" do
+          env = paid_request_env(beef_b64: beef_b64)
+
+          expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }.not_to raise_error
+          expect(wallet).to have_received(:internalize_action)
+        end
+      end
+
+      context "cache wiring" do
+        # The txid_store replay guard rejects the second settlement of the
+        # same txid before the visibility check runs, so we can't exercise
+        # the cache via two settle! calls on the same gateway. Seeding the
+        # injected cache and asserting ARC is never called instead proves
+        # the gateway uses the supplied cache object.
+        it "consults the injected visibility cache before calling ARC" do
+          cache = X402::BSV::NetworkVisibility::Cache.new
+          cache.store(transaction.txid_hex, "MINED")
+
+          cached_gateway = described_class.new(
+            wallet: wallet, txid_store: txid_store, arc_client: arc_client,
+            network_visibility_cache: cache
+          )
+
+          # ARC should never be called — the cache short-circuits it.
+          expect(arc_client).not_to receive(:status)
+
+          env = paid_request_env(beef_b64: beef_b64)
+          expect { cached_gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }.not_to raise_error
+          expect(wallet).to have_received(:internalize_action)
+        end
+      end
+    end
   end
 end

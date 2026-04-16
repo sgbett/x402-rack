@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **NO PAY → NO CONTENT invariant is now enforced at the gateway layer.** `BRC121Gateway` and `BRC105Gateway` verify on-chain visibility via ARC before `internalize_action`, closing the `no_send` exploit window left open by 0.10.0 / 0.10.1. A structurally valid BEEF that was never broadcast now receives `402 Payment Required` ("payment transaction not visible on the BSV network") instead of a 200 with content served. Closes #148; completes #158.
+
+### Added
+
+- `X402::BSV::NetworkVisibility` — shared helper centralising the "is this txid visible on the BSV network via ARC?" check. Bounded retries (4 attempts, ~1.75 s worst case), positive-only TTL cache (~30 s), and clean fault classification: non-visible statuses surface as 402, ARC 5xx / `SocketError` / `Timeout::Error` as 503. Used by `BRC121Gateway`, `BRC105Gateway`, and `ProofGateway` (#161).
+- On-chain visibility verification in `BRC121Gateway` via a new `arc_client:` constructor kwarg. Runs between payment-output verification and `wallet.internalize_action` so wallet state is never mutated for an unbroadcast tx (#162).
+- On-chain visibility verification in `BRC105Gateway` via a new `arc_client:` constructor kwarg. Runs between payment-output verification and `consume_prefix!` — verify-before-consume ordering is deliberate so a legitimate retry after re-broadcast can still use the same prefix (#163).
+- `config.verify_on_chain` (default `true`) and `X402_VERIFY_ON_CHAIN` env var — dev/staging kill-switch that skips the ARC visibility check when wallets may be mocked or never broadcast. Logs a loud WARN at startup when disabled: `verify_on_chain is disabled — NO PAY → NO CONTENT is NOT enforced. Do not run in production.` (#164)
+- Configuration auto-injects `shared_arc_client` into `BRC121Gateway` and `BRC105Gateway` so zero-config users get the invariant for free (#164).
+
+### Changed
+
+- `ProofGateway#check_mempool!` now delegates to `X402::BSV::NetworkVisibility.verify!`, sharing the retry policy, positive-only TTL cache, and fault classification with BRC-121 / BRC-105 gateways. The 8-value `ACCEPTABLE_MEMPOOL_STATUSES` whitelist is preserved verbatim and passed as `visible_statuses:` — ProofGateway's "is my broadcast propagating?" semantics are unchanged (#165).
+- **Breaking (status code):** ARC outages observed by `ProofGateway` now surface as `VerificationError(status: 503)` where previously they surfaced as `502`. This aligns the operator-facing status across all gateways: every ARC outage is a 503 regardless of which gateway was in the path. Callers that explicitly branched on `status == 502` must update to `503`.
+
+### Removed
+
+- `ProofGateway::MEMPOOL_RETRY_DELAYS_SECONDS` constant — retry timing is now owned by `X402::BSV::NetworkVisibility::RETRY_DELAYS_SECONDS`.
+
+### Operator notes
+
+- **ARC reachability is now a hard runtime dependency** on the critical path for BRC-121 and BRC-105 settlement (it was already one for PayGateway and ProofGateway). Monitor ARC 5xx rate and latency the same way you monitor your own database. The 402-vs-503 split is designed to drive different alert paths: elevated 402s mean client misbehaviour or exploit attempts; elevated 503s mean an ARC incident.
+
 ## [0.10.1] - 2026-04-16
 
 ### Removed
