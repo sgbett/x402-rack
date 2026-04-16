@@ -4,15 +4,13 @@ require "securerandom"
 require "json"
 require "base64"
 require "bsv-sdk"
-require "x402/bsv/network_visibility"
 
 # NO PAY -> NO CONTENT: this gateway serves content if and only if the
-# payment transaction is visible on the BSV network. The invariant is
-# enforced by +#verify_visibility!+ (below), which runs after payment
-# output verification but BEFORE +consume_prefix!+ and
-# +internalize_action+ — the ordering matters for retry semantics. See
-# README "What x402-rack guarantees" and +X402::BSV::NetworkVisibility+
-# for the shared retry / cache / 402-vs-503 classification.
+# vendor successfully broadcasts the payment transaction to the BSV
+# network. The invariant is enforced by +#broadcast!+ (below), which
+# runs after payment output verification but BEFORE +consume_prefix!+
+# and +internalize_action+ — the ordering matters for retry semantics.
+# See README "What x402-rack guarantees".
 
 module X402
   module BSV
@@ -38,17 +36,17 @@ module X402
       # @param key_deriver [BSV::Wallet::KeyDeriver] provides identity key + BRC-42 derivation
       # @param prefix_store [#store!, #valid?, #consume!] replay protection for derivation prefixes
       # @param wallet [#internalize_action] BRC-100 wallet for payment internalisation
-      # @param arc_client [#status, nil] ARC client for on-chain visibility verification.
-      #   When nil, visibility verification is skipped (backward compatibility).
-      # @param network_visibility_cache [NetworkVisibility::Cache] per-gateway
-      #   positive-only TTL cache protecting ARC from duplicate-submission bursts.
-      def initialize(key_deriver:, prefix_store:, wallet:, arc_client: nil,
-                     network_visibility_cache: NetworkVisibility::Cache.new)
+      # @param arc_client [#broadcast, nil] ARC client used by the gateway to
+      #   broadcast the payment transaction. Required at +settle!+ time — a
+      #   nil +arc_client+ silently breaks the NO PAY -> NO CONTENT invariant,
+      #   so we fail loudly instead. Construction still permits +nil+ for
+      #   unit-test ergonomics; production paths always wire ARC via
+      #   +Configuration#shared_arc_client+.
+      def initialize(key_deriver:, prefix_store:, wallet:, arc_client: nil)
         @key_deriver = key_deriver
         @prefix_store = prefix_store
         @wallet = wallet
         @arc_client = arc_client
-        @network_visibility_cache = network_visibility_cache
       end
 
       # Issue a 402 challenge with BRC-105 headers.
@@ -107,11 +105,11 @@ module X402
         log_expected_script(expected_script)
         log_tx_outputs(subject_tx, required_sats, expected_script)
         paid_sats, output_index = verify_payment_output!(subject_tx, required_sats, expected_script)
-        # Verify BEFORE consume_prefix! so a legitimate retry after a
+        # Broadcast BEFORE consume_prefix! so a legitimate retry after a
         # re-broadcast can still use the prefix. Consuming first would
         # make the subsequent attempt fail the replay check regardless
         # of whether the client fixed their broadcast.
-        verify_visibility!(subject_tx.txid_hex)
+        broadcast!(subject_tx, route)
         consume_prefix!(prefix)
         internalize_payment!(
           transaction_b64: payment["transaction"],
@@ -126,19 +124,36 @@ module X402
 
       private
 
-      # Delegate to NetworkVisibility.verify! when an ARC client is
-      # configured. Absence of an arc_client skips the check entirely
-      # (backward compatibility for callers not yet wired to ARC).
-      def verify_visibility!(txid)
-        return unless @arc_client
+      # Broadcast the payment transaction via ARC. The vendor — not the
+      # client — is the settlement authority: a 200 response means ARC
+      # accepted the tx. Structurally valid BEEF proves nothing about
+      # whether the client actually broadcast.
+      #
+      # A nil +@arc_client+ silently breaks the NO PAY -> NO CONTENT
+      # invariant, so we raise a configuration error instead of quietly
+      # skipping. Production paths always wire ARC via
+      # +Configuration#shared_arc_client+.
+      #
+      # Error mapping mirrors BRC-121:
+      # - +BroadcastError+ with +status_code >= 500+   → 503 (ARC outage)
+      # - +BroadcastError+ otherwise                    → 402 (client's tx rejected)
+      # - Network errors (+SocketError+, +Timeout+, +Errno::*+) → 503
+      def broadcast!(subject_tx, route)
+        unless @arc_client
+          raise VerificationError.new(
+            "gateway misconfigured: arc_client is required for payment broadcast", status: 500
+          )
+        end
 
-        X402::BSV::NetworkVisibility.verify!(
-          arc_client: @arc_client,
-          txid: txid,
-          cache: @network_visibility_cache,
-          logger: logger,
-          visible_statuses: NetworkVisibility::VISIBLE_STATUSES
-        )
+        @arc_client.broadcast(subject_tx, wait_for: route.arc_wait_for)
+      rescue ::BSV::Network::BroadcastError => e
+        if e.status_code.is_a?(Integer) && e.status_code >= 500
+          raise VerificationError.new("payment verification temporarily unavailable", status: 503)
+        end
+
+        raise VerificationError.new("payment broadcast rejected: #{e.message}", status: 402)
+      rescue SocketError, Timeout::Error, Errno::ECONNREFUSED, Errno::ETIMEDOUT, Errno::EHOSTUNREACH
+        raise VerificationError.new("payment verification temporarily unavailable", status: 503)
       end
 
       def parse_payment(proof_payload)

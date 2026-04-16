@@ -2,23 +2,26 @@
 
 # End-to-end test for BRC121Gateway against BSV testnet.
 #
-# This test encodes the NO PAY → NO CONTENT invariant as two complementary
-# `it` blocks:
+# This test encodes the NO PAY → NO CONTENT invariant under the vendor-
+# broadcast model (0.11.0+) as two complementary `it` blocks:
 #
 #   1. Happy path — the client wallet broadcasts its BRC-29 payment via its
-#      injected ARC broadcaster, the server gateway receives the five proof
-#      headers, verifies the BEEF + output + freshness, and internalises the
-#      payment. Broadcast is the wallet's job; the gateway must not attempt
-#      to broadcast on the client's behalf.
+#      injected ARC broadcaster, then submits the five proof headers. The
+#      server gateway parses the BEEF, verifies the output, broadcasts the
+#      subject transaction to ARC itself (idempotent — ARC treats the
+#      duplicate as a no-op), and internalises the payment. Both the client
+#      wallet's broadcaster spy and the server's ARC broadcaster observe a
+#      call; settlement returns 200.
 #
-#   2. Exploit path — the client builds a structurally valid BEEF via
-#      `create_action(options: { no_send: true })`. The wallet never touches
-#      the broadcaster. The client then submits the proof headers to the
-#      server as though it had paid. Verification is the gateway's job: on a
-#      correct implementation the gateway queries ARC for the txid and
-#      refuses to serve content because the transaction is not visible on
-#      the network. Neither job can be skipped — this test is the executable
-#      regression guard for the invariant.
+#   2. no_send client path — the client builds a structurally valid BEEF
+#      via `create_action(options: { no_send: true })`. The client wallet
+#      never touches its broadcaster. The client submits the proof headers
+#      to the server. Under vendor-broadcast, the server broadcasts the
+#      BEEF itself via ARC, settlement succeeds, and 200 is returned. This
+#      is no longer an exploit — it is the documented "vendor is the
+#      settlement point" flow. The client-wallet broadcaster spy asserts
+#      no client-side broadcast happened; the server's ARC broadcaster
+#      asserts the settlement broadcast happened.
 #
 # Environment variables:
 #   SERVER_WIF       - server identity key in WIF format (testnet)
@@ -47,17 +50,26 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
 
   let(:brc29_protocol_id) { [2, "3241645161d8"].freeze }
 
-  # Real ARC broadcaster — wrapped in an rspec spy so the exploit path can
-  # assert `not_to receive(:broadcast)` without replacing the broadcast path
-  # entirely (the happy path still needs real broadcasting). ARC's public
-  # surface is `broadcast`, `broadcast_many`, `status` — there is no
-  # `broadcast_beef` method (the gateway layer no longer broadcasts BEEF;
-  # see #155).
+  # Real ARC broadcaster — wrapped in two separate rspec spies so the
+  # client-side and server-side broadcasts are independently observable.
+  # ARC's public surface is `broadcast`, `broadcast_many`, `status`.
+  #
+  # - +broadcaster+ is injected into the client wallet. The no_send spec
+  #   asserts it is never called.
+  # - +server_arc+ is injected into the gateway. Both specs assert it
+  #   receives the vendor-broadcast call.
   let(:real_arc) { BSV::Network::ARC.new(arc_url, api_key: arc_api_key) }
   let(:broadcaster) do
     spy = instance_double(BSV::Network::ARC)
     allow(spy).to receive(:broadcast) { |*args, **kwargs| real_arc.broadcast(*args, **kwargs) }
     allow(spy).to receive(:broadcast_many) { |*args, **kwargs| real_arc.broadcast_many(*args, **kwargs) }
+    spy
+  end
+  let(:server_arc) do
+    spy = instance_double(BSV::Network::ARC)
+    allow(spy).to receive(:broadcast) { |*args, **kwargs| real_arc.broadcast(*args, **kwargs) }
+    allow(spy).to receive(:broadcast_many) { |*args, **kwargs| real_arc.broadcast_many(*args, **kwargs) }
+    allow(spy).to receive(:status) { |*args, **kwargs| real_arc.status(*args, **kwargs) }
     spy
   end
 
@@ -90,16 +102,15 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
     )
   end
 
-  # Gateway wired with the real ARC for on-chain visibility verification.
-  # This is what activates the NO PAY → NO CONTENT check on settle!:
-  # without an arc_client the gateway silently skips the check and the
-  # exploit-path assertion stays red regardless of whether the client
-  # broadcast. The broadcaster spy goes to the client wallet only — the
-  # server's visibility check hits real ARC directly.
+  # Gateway wired with the server-side ARC spy. Under vendor-broadcast the
+  # gateway calls +arc_client.broadcast(subject_tx)+ between output
+  # verification and +internalize_action+; the spy proxies to real ARC so
+  # the tx actually lands on the network but we can assert the call
+  # happened from the server side.
   let(:gateway) do
     X402::BSV::BRC121Gateway.new(
       wallet: server_wallet,
-      arc_client: real_arc
+      arc_client: server_arc
     )
   end
 
@@ -162,8 +173,8 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
     raise "Tx #{txid} not visible on WhatsOnChain within #{timeout}s (last HTTP #{last_code}: #{last_body})"
   end
 
-  describe "full BRC-121 single-round-trip payment flow" do
-    it "server challenges → client pays via wallet broadcast → server verifies + internalises" do
+  describe "happy path: client pays, server broadcasts, settlement succeeds" do
+    it "server challenges → client broadcasts → server re-broadcasts (idempotent) → internalises" do
       log_path = E2ELogger.start_log("brc121-gateway-e2e-happy")
       E2ELogger.header("BRC121Gateway — Happy Path (BSV Testnet E2E)")
 
@@ -266,6 +277,11 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       expect(settlement.txid).to eq(result[:txid])
       expect(settlement.receipt_headers["x-bsv-payment-satoshis-paid"]).to eq(amount.to_s)
 
+      # Vendor-broadcast: the gateway must have broadcast the subject tx
+      # itself via ARC. ARC is idempotent so the client's earlier broadcast
+      # does not interfere — the server's call is independently observable.
+      expect(server_arc).to have_received(:broadcast).at_least(:once)
+
       E2ELogger.tx("Settlement tx", settlement.txid)
       E2ELogger.success("BRC-121 payment accepted — content served")
 
@@ -301,10 +317,10 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
     end
   end
 
-  describe "exploit path — NO PAY → NO CONTENT invariant" do
-    it "rejects a structurally valid but un-broadcast BEEF" do
-      log_path = E2ELogger.start_log("brc121-gateway-e2e-exploit")
-      E2ELogger.header("BRC121Gateway — Exploit Path (TDD guard for #158)")
+  describe "server broadcasts even when client used no_send" do
+    it "vendor-broadcast settles a BEEF the client chose not to broadcast" do
+      log_path = E2ELogger.start_log("brc121-gateway-e2e-no-send")
+      E2ELogger.header("BRC121Gateway — no_send client settles via vendor broadcast (#168)")
 
       server_identity_key_hex = server_wallet.get_public_key({ identity_key: true }).fetch(:public_key)
 
@@ -333,19 +349,21 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
         time_ms: time_ms
       )
 
-      # THE ATTACK: build a BEEF with no_send — wallet must NOT broadcast.
-      E2ELogger.step(2, :client, "create_action(options: { no_send: true }) — construct BEEF, skip broadcast")
+      # no_send: the client wallet builds the BEEF but its broadcaster is
+      # never invoked. Under 0.11.0+ vendor-broadcast, this is a
+      # supported flow — the server broadcasts for the client.
+      E2ELogger.step(2, :client, "create_action(options: { no_send: true }) — construct BEEF, skip client broadcast")
 
-      # Pre-assert the broadcaster is untouched on this path.
+      # The client-side broadcaster must stay untouched on this path.
       expect(broadcaster).not_to receive(:broadcast)
       expect(broadcaster).not_to receive(:broadcast_many)
 
       result = client_wallet.create_action({
-                                             description: "BRC-121 exploit (no_send)",
+                                             description: "BRC-121 vendor-broadcast (no_send)",
                                              outputs: [{
                                                locking_script: payment_script.to_hex,
                                                satoshis: amount,
-                                               output_description: "BRC-121 exploit output"
+                                               output_description: "BRC-121 vendor-broadcast output"
                                              }],
                                              auto_fund: true,
                                              options: { no_send: true }
@@ -361,12 +379,12 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       vout = subject_tx.outputs.index { |o| o.satoshis == amount && o.locking_script.to_hex == payment_script.to_hex }
 
       E2ELogger.result("Txid", result[:txid])
-      E2ELogger.result("Broadcast", "SKIPPED (no_send) — this is the attack")
+      E2ELogger.result("Client broadcast", "SKIPPED (no_send)")
 
       E2ELogger.separator
 
-      # Submit the forged proof headers to the gateway.
-      E2ELogger.step(3, :client, "Submit proof headers to server (pretending to have paid)")
+      # Submit the proof headers — the server now owns the broadcast.
+      E2ELogger.step(3, :client, "Submit proof headers to server (relying on vendor-broadcast)")
       request = proof_request(
         beef_b64: beef_b64,
         sender: client_wallet.key_deriver.identity_key,
@@ -376,23 +394,23 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       )
 
       E2ELogger.separator
-      E2ELogger.step(4, :server, "Must verify on-chain visibility before returning 200")
+      E2ELogger.step(4, :server, "Broadcast BEEF via ARC, internalise, return 200")
 
-      # TDD guard for #158: this assertion FAILS on 0.10.1 (server returns 200 without verifying).
-      # Once #158 ships, the gateway's on-chain visibility check returns 402 and this test passes.
-      # DO NOT "fix" this test by changing the expected status on master. The failure IS the regression.
-      #
-      # The reason-string regex is intentionally broad — #158's implementer defines the exact
-      # operator-facing wording. What MUST hold: status 402, and the reason communicates that
-      # the payment was not visible on-chain. If the wording diverges, update the regex to
-      # match the chosen phrase rather than narrowing the implementation.
-      expect { gateway.settle!("x-bsv-beef", nil, request, route) }
-        .to raise_error(X402::VerificationError) { |e|
-          expect(e.status).to eq(402)
-          expect(e.reason).to match(/not visible|payment verification|on.chain|unconfirmed|un.?broadcast/i)
-        }
+      # Under vendor-broadcast (0.11.0+), the server is the settlement
+      # point: it broadcasts the subject tx to ARC itself and returns 200.
+      # The previous release raised 402 "not visible" on this path; under
+      # the new model, noSend clients are a supported flow, not an exploit.
+      settlement = nil
+      expect { settlement = gateway.settle!("x-bsv-beef", nil, request, route) }.not_to raise_error
 
-      E2ELogger.success("Exploit rejected — NO PAY → NO CONTENT invariant holds")
+      expect(settlement).to be_a(X402::SettlementResult)
+      expect(settlement.txid).to eq(result[:txid])
+      expect(settlement.receipt_headers["x-bsv-payment-satoshis-paid"]).to eq(amount.to_s)
+
+      # The server-side ARC spy must have seen the vendor broadcast.
+      expect(server_arc).to have_received(:broadcast).at_least(:once)
+
+      E2ELogger.success("Vendor-broadcast settled no_send client — 200 returned")
     ensure
       E2ELogger.finish_log
       E2ELogger.emit "  Log: #{log_path}" if log_path

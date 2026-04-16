@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-04-16
+
+### Changed — Breaking
+
+- **Vendor broadcasts: the NO PAY → NO CONTENT enforcement now uses server-side broadcast, not client-broadcast verification.** `BRC121Gateway` and `BRC105Gateway` broadcast the client's signed BEEF to ARC themselves (idempotent — safe if the client already broadcast). This matches BSV's native commerce model: the vendor settles the payment. The previous status-check approach (0.10.2) is replaced.
+- `config.verify_on_chain` accessor removed. The `X402_VERIFY_ON_CHAIN` env var is no longer honoured. Vendor-broadcast is not optional — there is no meaningful "partial enforcement" mode. If you need to disable payments for dev or staging, mock the gateway or don't enable payment middleware on the routes you want un-gated.
+- `network_visibility_cache:` kwarg removed from `BRC121Gateway` and `BRC105Gateway` constructors.
+
+### Removed
+
+- `X402::BSV::NetworkVisibility` module (helper, cache, retry loop) — entire file deleted. Replaced by direct `arc.broadcast(subject_tx, wait_for:)` calls on the gateway.
+
+### Added
+
+- `arc_client` is now required (not optional) for `BRC121Gateway` and `BRC105Gateway` at settle time. A missing `arc_client` raises `VerificationError(500)` "payment broadcaster not configured" — the invariant cannot be enforced without it.
+
+### Why this pivot
+
+The status-check approach shipped in 0.10.2 worked but was architecturally wrong. BSV commerce model: the vendor is the settlement point. ARC is idempotent — broadcasting the same tx twice is a no-op, not duplicated work. By broadcasting ourselves, we guarantee the tx is on-chain before returning 200, with no propagation race, no `no_send` exploit surface, and simpler code.
+
+### Gemspec
+
+- `bsv-sdk` floor raised to `>= 0.12.0` (no new method added; existing `arc.broadcast` is the mechanism).
+
 ## [0.10.2] - 2026-04-16
 
 ### Fixed

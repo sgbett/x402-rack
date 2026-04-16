@@ -2,16 +2,75 @@
 
 ## Core invariant
 
-> **x402-rack serves content if and only if the payment transaction is visible on the BSV network.**
+> **x402-rack serves content if and only if the vendor has broadcast the payment transaction to the BSV network.**
 
-This is the one job. Every gateway enforces it at the same point in the settle flow: after the BEEF has been parsed and the payment output verified, but **before** any wallet or replay state is mutated. The check lives in `X402::BSV::NetworkVisibility.verify!` and is shared by `PayGateway`, `ProofGateway`, `BRC121Gateway`, and `BRC105Gateway`.
+This is the one job. `BRC121Gateway` and `BRC105Gateway` enforce it by broadcasting the client's signed BEEF to ARC themselves, after the payment output has been verified but **before** any wallet or replay state is mutated. ARC's idempotency means duplicate broadcasts (when the client has already broadcast) are safe — they return 2xx without duplicating work. `ProofGateway` keeps its original semantics (client broadcasts first, server reads ARC status via `arc_client.status(txid)`) because the scheme is explicitly proof-of-prior-payment.
 
 Failures bifurcate cleanly in the HTTP response:
 
-- **402** — transaction not visible after bounded retries (client fault)
+- **402** — ARC rejected the broadcast (malformed tx, insufficient funds, double-spend; client fault)
 - **503** — ARC unreachable / 5xx / timeout (infrastructure fault)
 
-See [schemes/brc-121.md](schemes/brc-121.md#verify-on-chain) and [schemes/brc-105.md](schemes/brc-105.md#verify-on-chain) for the per-gateway specifics.
+See [schemes/brc-121.md](schemes/brc-121.md#vendor-broadcast) and [schemes/brc-105.md](schemes/brc-105.md#vendor-broadcast) for the per-gateway specifics.
+
+## Mental model: x402-rack is the checkout
+
+The clearest way to understand x402-rack is to stop thinking of it as a "payment verifier" and start thinking of it as a **point-of-sale terminal** sitting between the customer and the merchant's back office.
+
+```
+Customer                 x402-rack                    Vendor (the app)
+────────                 ─────────                    ────────────────
+                       "400 sats please"
+Builds tx            ←
+Hands signed BEEF    →   "let me ring that up"
+                         ├─ verify the tx pays right
+                         ├─ broadcast to ARC      ← cash register ding
+                         ├─ record in wallet      ← till drawer closes
+                         └─ stamp receipt
+                       →  "paid. proceed."
+                                                   ← serves the content
+```
+
+The customer presents payment. The checkout processes it — settling on-chain and recording the receipt — and only then does the vendor's app deliver the goods. The same role a card reader plays at a physical till: sitting between the customer and the merchant's backend, doing the settlement mechanics so neither party has to.
+
+### Point-of-sale equivalents
+
+| Physical till | x402-rack |
+|---|---|
+| Card reader | BEEF header parser |
+| Bank auth + settlement | `arc.broadcast(subject_tx)` |
+| Till drawer | `wallet.internalize_action` |
+| Receipt printer | `SettlementResult` with receipt headers |
+| "APPROVED / DECLINED" display | HTTP 200 / 402 |
+| "TERMINAL UNAVAILABLE" | HTTP 503 |
+
+### Why this framing matters
+
+It explains the design decisions that otherwise look arbitrary:
+
+- **Why does the vendor broadcast?** Because the checkout takes the card and runs the transaction. It doesn't ask the customer to run a parallel transaction with the bank and present proof — it *is* the settlement point.
+- **Why is ARC idempotency the load-bearing property?** Because the card reader always dials the bank, even if you've already paid somewhere else with the same card today. The bank handles deduplication; the reader doesn't need to second-guess.
+- **Why no `verify_on_chain` kill-switch?** Because a till that lets you turn off "actually process the payment" isn't a till any more. The checkout either settles or refuses — there's no halfway.
+- **Why does ARC failure return 503, not 402?** Because an unreachable bank is a shop problem, not a customer problem. The sign reads "TERMINAL DOWN — please try again", not "YOUR CARD IS DECLINED".
+- **Why must the `arc_client` be configured?** Because a checkout without a card reader isn't a checkout. The invariant cannot be enforced without the network-write primitive.
+
+### The pivot from 0.10.2 to 0.11.0
+
+This model also explains why 0.10.2 felt wrong. The status-check approach (0.10.2) was like a till that asks "did you pay the bank yet?" — making the customer do the transaction and then showing proof. The vendor-broadcast approach (0.11.0) is like a till that *takes* the card and *runs* the transaction. Cleaner, and matches what retailers actually do.
+
+```
+0.10.2 (status-check — wrong):          0.11.0 (vendor-broadcast — right):
+─────────────────────────────          ──────────────────────────────────
+Customer: I paid, here's proof         Customer: here's my card
+Till:     let me check with the bank   Till:     thank you [dip, beep]
+Bank:     status: SEEN_ON_NETWORK      Bank:     approved
+Till:     proceed                      Till:     proceed
+```
+
+Same outcome when everything works. Different failure modes:
+
+- Under 0.10.2, a customer who hadn't actually paid was rejected *after* the till spent an unpredictable amount of time polling the bank (propagation lag).
+- Under 0.11.0, the till just runs the transaction itself — either it succeeds (tx is on-chain) or ARC refuses it (genuine rejection with a clear reason). No polling window, no noSend corner case.
 
 ## Middleware as Dispatcher (`X402::Middleware`)
 
@@ -32,7 +91,7 @@ Gateways are pluggable backends that handle chain-specific settlement. They dele
 
 - Builds challenge data (including partial transaction templates)
 - Verifies and settles proofs
-- **Verifies on-chain visibility via ARC before mutating wallet state** (the NO PAY → NO CONTENT invariant)
+- **Broadcasts the payment to ARC before mutating wallet state** (BRC-121 and BRC-105 gateways) **or reads ARC status to confirm prior client broadcast** (ProofGateway) — the NO PAY → NO CONTENT invariant
 - Interacts with ARC and/or a treasury service via the BSV wallet
 
 ### Gateway Interface
