@@ -107,6 +107,18 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
     X402::Configuration::Route.new(http_method: "GET", path: "/premium", amount_sats: 500)
   end
 
+  # Convert a regular (BRC-62) BEEF bundle returned by the wallet into
+  # Atomic BEEF (BRC-95) with the subject_txid header populated.
+  # BRC-121 §4 requires Atomic BEEF; the gateway's parse_beef_transaction
+  # uses beef.subject_txid which is only set on Atomic BEEF. Without this
+  # conversion the gateway raises 400 "no subject transaction in BEEF
+  # bundle" before reaching the visibility check.
+  def atomic_beef_from_result(result)
+    raw_beef = result[:tx].pack("C*")
+    beef = BSV::Transaction::Beef.from_binary(raw_beef)
+    beef.to_atomic_binary([result[:txid]].pack("H*"))
+  end
+
   # Derive the BRC-29 payment script the client pays to. Mirrors the
   # derivation the server performs when it processes the remittance.
   def derive_payment_script(client_wallet:, server_identity_key_hex:, prefix:, time_ms:)
@@ -213,17 +225,17 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       expect(result[:tx]).to be_a(Array)
       expect(broadcaster).to have_received(:broadcast).at_least(:once)
 
-      beef_bytes = result[:tx].pack("C*")
-      beef_b64 = Base64.strict_encode64(beef_bytes)
+      atomic_beef = atomic_beef_from_result(result)
+      beef_b64 = Base64.strict_encode64(atomic_beef)
 
       E2ELogger.result("Txid", result[:txid])
-      E2ELogger.result("BEEF size", "#{beef_bytes.bytesize} bytes")
+      E2ELogger.result("BEEF size", "#{atomic_beef.bytesize} bytes (Atomic BEEF)")
       E2ELogger.arrow(:client, :arc, "POST /v1/tx (wallet broadcast)")
 
       E2ELogger.separator
 
       # Step 4: Locate the payment output vout (auto-fund shuffles outputs)
-      subject_tx = BSV::Transaction::Beef.from_binary(beef_bytes).find_transaction([result[:txid]].pack("H*"))
+      subject_tx = BSV::Transaction::Beef.from_binary(atomic_beef).find_transaction([result[:txid]].pack("H*"))
       vout = subject_tx.outputs.index { |o| o.satoshis == amount && o.locking_script.to_hex == payment_script.to_hex }
       expect(vout).not_to be_nil
 
@@ -342,10 +354,10 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       expect(result[:txid]).to match(/\A[0-9a-f]{64}\z/)
       expect(result[:tx]).to be_a(Array)
 
-      beef_bytes = result[:tx].pack("C*")
-      beef_b64 = Base64.strict_encode64(beef_bytes)
+      atomic_beef = atomic_beef_from_result(result)
+      beef_b64 = Base64.strict_encode64(atomic_beef)
 
-      subject_tx = BSV::Transaction::Beef.from_binary(beef_bytes).find_transaction([result[:txid]].pack("H*"))
+      subject_tx = BSV::Transaction::Beef.from_binary(atomic_beef).find_transaction([result[:txid]].pack("H*"))
       vout = subject_tx.outputs.index { |o| o.satoshis == amount && o.locking_script.to_hex == payment_script.to_hex }
 
       E2ELogger.result("Txid", result[:txid])
@@ -412,12 +424,12 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
                                              options: { no_send: true }
                                            })
 
-      beef_bytes = result[:tx].pack("C*")
-      subject_tx = BSV::Transaction::Beef.from_binary(beef_bytes).find_transaction([result[:txid]].pack("H*"))
+      atomic_beef = atomic_beef_from_result(result)
+      subject_tx = BSV::Transaction::Beef.from_binary(atomic_beef).find_transaction([result[:txid]].pack("H*"))
       vout = subject_tx.outputs.index { |o| o.satoshis == amount && o.locking_script.to_hex == payment_script.to_hex }
 
       {
-        beef_b64: Base64.strict_encode64(beef_bytes),
+        beef_b64: Base64.strict_encode64(atomic_beef),
         sender: client_wallet.key_deriver.identity_key,
         nonce: prefix,
         time_ms: time_ms,
