@@ -137,7 +137,7 @@ module X402
           txid: txid,
           cache: @network_visibility_cache,
           logger: logger,
-          visible_statuses: %w[SEEN_ON_NETWORK MINED CONFIRMED_ON_NETWORK]
+          visible_statuses: NetworkVisibility::VISIBLE_STATUSES
         )
       end
 

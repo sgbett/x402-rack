@@ -28,7 +28,7 @@ RSpec.describe X402::BSV::NetworkVisibility do
   end
 
   describe "happy path" do
-    %w[SEEN_ON_NETWORK MINED CONFIRMED_ON_NETWORK].each do |status|
+    %w[SEEN_ON_NETWORK MINED].each do |status|
       it "succeeds on #{status} on the first attempt" do
         expect(arc_client).to receive(:status).with(txid).once.and_return(status_response(status))
 

@@ -28,11 +28,12 @@ module X402
     # legitimate payments.
     module NetworkVisibility
       # ARC statuses that indicate the client successfully broadcast.
-      # Kept deliberately tight (3 values) — distinct from
+      # Kept deliberately tight (2 values) — distinct from
       # ProofGateway's 8-value "is my server's broadcast propagating?"
-      # whitelist. `CONFIRMED_ON_NETWORK` is defensive forward-compat;
-      # not yet documented in the SDK's ARC reference.
-      VISIBLE_STATUSES = %w[SEEN_ON_NETWORK MINED CONFIRMED_ON_NETWORK].freeze
+      # whitelist. SEEN_ON_NETWORK is the first ARC status confirming
+      # a *different* node has observed the tx (not just ARC-side
+      # ingestion); MINED confirms it landed in a block.
+      VISIBLE_STATUSES = %w[SEEN_ON_NETWORK MINED].freeze
 
       # Backoff schedule between ARC polls. One immediate attempt plus
       # three retries → 4 attempts total, absorbing ~1.75 s of propagation
