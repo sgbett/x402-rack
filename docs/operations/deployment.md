@@ -40,42 +40,21 @@ arc = BSV::Network::ARC.new(
 
 ### ARC is a hard dependency
 
-Every gateway enforces the NO PAY → NO CONTENT invariant by asking ARC whether the payment transaction is visible on the network before mutating wallet state. **ARC reachability is therefore a hard runtime dependency on the critical path** — treat it with the same seriousness as your primary database.
+`BRC121Gateway` and `BRC105Gateway` enforce the NO PAY → NO CONTENT invariant by broadcasting the client's signed BEEF to ARC themselves before mutating wallet state. `ProofGateway` reads ARC status (the scheme is explicitly proof-of-prior-payment). Either way, **ARC reachability is a hard runtime dependency on the critical path** — treat it with the same seriousness as your primary database. This was true before vendor-broadcast and it is even more true now: without a successful ARC broadcast there is literally no settlement.
 
 Minimum monitoring:
 
 - **Reachability** — alert on elevated 5xx rate or connection failures from the configured ARC host(s)
-- **Latency** — verification retries span ~1.75 s worst case; if ARC median latency approaches that, users will see timeouts
-- **Status-code mix in x402-rack itself** — elevated **503s** point at an ARC incident; elevated **402s** point at client misbehaviour or exploit attempts. The distinction is deliberate and should drive different alert paths:
+- **Latency** — broadcast calls block the client-facing response; if ARC median latency grows, paid-endpoint latency grows in step
+- **Status-code mix in x402-rack itself** — elevated **503s** point at an ARC incident; elevated **402s** point at client misbehaviour. The distinction is deliberate and should drive different alert paths:
     - **Lots of 503s** → page the on-call operator; ARC is likely down or degraded. Paid requests are (correctly) being refused until ARC recovers.
-    - **Lots of 402s** → investigate the client. Common causes: wallets misconfigured with `no_send: true` without subsequent broadcast, pointing at a different ARC than the server, or an attempted `no_send` exploit.
+    - **Lots of 402s** → investigate the client. Common causes: malformed BEEF, insufficient funds on client-provided inputs, or an attempted double-spend.
 
-### Kill-switch: `verify_on_chain`
+### No kill-switch
 
-Some development and staging environments run test suites against wallets that never broadcast (mocks, fixtures, local-only flows). Rather than monkey-patching the gateway, disable the on-chain check explicitly:
+There is no `verify_on_chain` toggle. Vendor-broadcast is not optional — without it there is no meaningful enforcement of NO PAY → NO CONTENT, and a "partial enforcement" mode would be worse than either extreme (it would give the wrong impression of safety). Earlier releases (0.10.x) shipped a kill-switch; 0.11.0 removes it.
 
-```ruby
-X402.configure do |c|
-  c.verify_on_chain = false
-  # ...
-end
-```
-
-Or via environment variable (useful for per-environment containers):
-
-```bash
-X402_VERIFY_ON_CHAIN=false
-```
-
-Accepted falsy values (case-insensitive, whitespace-trimmed): `false`, `0`, `no`. Any other value — including unset — keeps the safe default of `true`.
-
-When disabled, x402-rack emits a loud WARN banner at startup so the override cannot be missed:
-
-```
-[x402] verify_on_chain is disabled — NO PAY → NO CONTENT is NOT enforced. Do not run in production.
-```
-
-The default is `true` for a reason. Do not disable it in production.
+For dev or staging environments that don't want real payments: mock the gateway, or don't enable payment middleware on the routes you want un-gated. `config.protect` is opt-in per-route — the simplest solution is usually not to protect the route at all in development.
 
 ## Rate Limiting
 

@@ -2,16 +2,16 @@
 
 ## Core invariant
 
-> **x402-rack serves content if and only if the payment transaction is visible on the BSV network.**
+> **x402-rack serves content if and only if the vendor has broadcast the payment transaction to the BSV network.**
 
-This is the one job. Every gateway enforces it at the same point in the settle flow: after the BEEF has been parsed and the payment output verified, but **before** any wallet or replay state is mutated. The check lives in `X402::BSV::NetworkVisibility.verify!` and is shared by `PayGateway`, `ProofGateway`, `BRC121Gateway`, and `BRC105Gateway`.
+This is the one job. `BRC121Gateway` and `BRC105Gateway` enforce it by broadcasting the client's signed BEEF to ARC themselves, after the payment output has been verified but **before** any wallet or replay state is mutated. ARC's idempotency means duplicate broadcasts (when the client has already broadcast) are safe — they return 2xx without duplicating work. `ProofGateway` keeps its original semantics (client broadcasts first, server reads ARC status via `arc_client.status(txid)`) because the scheme is explicitly proof-of-prior-payment.
 
 Failures bifurcate cleanly in the HTTP response:
 
-- **402** — transaction not visible after bounded retries (client fault)
+- **402** — ARC rejected the broadcast (malformed tx, insufficient funds, double-spend; client fault)
 - **503** — ARC unreachable / 5xx / timeout (infrastructure fault)
 
-See [schemes/brc-121.md](schemes/brc-121.md#verify-on-chain) and [schemes/brc-105.md](schemes/brc-105.md#verify-on-chain) for the per-gateway specifics.
+See [schemes/brc-121.md](schemes/brc-121.md#vendor-broadcast) and [schemes/brc-105.md](schemes/brc-105.md#vendor-broadcast) for the per-gateway specifics.
 
 ## Middleware as Dispatcher (`X402::Middleware`)
 
@@ -32,7 +32,7 @@ Gateways are pluggable backends that handle chain-specific settlement. They dele
 
 - Builds challenge data (including partial transaction templates)
 - Verifies and settles proofs
-- **Verifies on-chain visibility via ARC before mutating wallet state** (the NO PAY → NO CONTENT invariant)
+- **Broadcasts the payment to ARC before mutating wallet state** (BRC-121 and BRC-105 gateways) **or reads ARC status to confirm prior client broadcast** (ProofGateway) — the NO PAY → NO CONTENT invariant
 - Interacts with ARC and/or a treasury service via the BSV wallet
 
 ### Gateway Interface
