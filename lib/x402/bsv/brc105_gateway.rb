@@ -4,6 +4,7 @@ require "securerandom"
 require "json"
 require "base64"
 require "bsv-sdk"
+require "x402/bsv/network_visibility"
 
 module X402
   module BSV
@@ -29,10 +30,17 @@ module X402
       # @param key_deriver [BSV::Wallet::KeyDeriver] provides identity key + BRC-42 derivation
       # @param prefix_store [#store!, #valid?, #consume!] replay protection for derivation prefixes
       # @param wallet [#internalize_action] BRC-100 wallet for payment internalisation
-      def initialize(key_deriver:, prefix_store:, wallet:)
+      # @param arc_client [#status, nil] ARC client for on-chain visibility verification.
+      #   When nil, visibility verification is skipped (backward compatibility).
+      # @param network_visibility_cache [NetworkVisibility::Cache] per-gateway
+      #   positive-only TTL cache protecting ARC from duplicate-submission bursts.
+      def initialize(key_deriver:, prefix_store:, wallet:, arc_client: nil,
+                     network_visibility_cache: NetworkVisibility::Cache.new)
         @key_deriver = key_deriver
         @prefix_store = prefix_store
         @wallet = wallet
+        @arc_client = arc_client
+        @network_visibility_cache = network_visibility_cache
       end
 
       # Issue a 402 challenge with BRC-105 headers.
@@ -91,6 +99,11 @@ module X402
         log_expected_script(expected_script)
         log_tx_outputs(subject_tx, required_sats, expected_script)
         paid_sats, output_index = verify_payment_output!(subject_tx, required_sats, expected_script)
+        # Verify BEFORE consume_prefix! so a legitimate retry after a
+        # re-broadcast can still use the prefix. Consuming first would
+        # make the subsequent attempt fail the replay check regardless
+        # of whether the client fixed their broadcast.
+        verify_visibility!(subject_tx.txid_hex)
         consume_prefix!(prefix)
         internalize_payment!(
           transaction_b64: payment["transaction"],
@@ -104,6 +117,21 @@ module X402
       end
 
       private
+
+      # Delegate to NetworkVisibility.verify! when an ARC client is
+      # configured. Absence of an arc_client skips the check entirely
+      # (backward compatibility for callers not yet wired to ARC).
+      def verify_visibility!(txid)
+        return unless @arc_client
+
+        X402::BSV::NetworkVisibility.verify!(
+          arc_client: @arc_client,
+          txid: txid,
+          cache: @network_visibility_cache,
+          logger: logger,
+          visible_statuses: %w[SEEN_ON_NETWORK MINED CONFIRMED_ON_NETWORK]
+        )
+      end
 
       def parse_payment(proof_payload)
         JSON.parse(proof_payload)
