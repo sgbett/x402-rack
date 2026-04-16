@@ -88,7 +88,18 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
     )
   end
 
-  let(:gateway) { X402::BSV::BRC121Gateway.new(wallet: server_wallet) }
+  # Gateway wired with the real ARC for on-chain visibility verification.
+  # This is what activates the NO PAY → NO CONTENT check on settle!:
+  # without an arc_client the gateway silently skips the check and the
+  # exploit-path assertion stays red regardless of whether the client
+  # broadcast. The broadcaster spy goes to the client wallet only — the
+  # server's visibility check hits real ARC directly.
+  let(:gateway) do
+    X402::BSV::BRC121Gateway.new(
+      wallet: server_wallet,
+      arc_client: real_arc
+    )
+  end
 
   let(:route) do
     X402::Configuration::Route.new(http_method: "GET", path: "/premium", amount_sats: 500)
