@@ -33,7 +33,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   spec.add_dependency "base64", "~> 0.2"
-  spec.add_dependency "bsv-sdk", ">= 0.12.0", "< 1.0"
+  spec.add_dependency "bsv-sdk", ">= 0.12.1", "< 1.0"
   spec.add_dependency "bsv-wallet", ">= 0.5.0", "< 1.0"
   spec.add_dependency "json-canonicalization", "~> 1.0"
   spec.add_dependency "rack", "~> 3.0"
