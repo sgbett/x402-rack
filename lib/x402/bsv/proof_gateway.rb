@@ -11,11 +11,13 @@ require_relative "../verification/protocol_checks"
 
 # NO PAY -> NO CONTENT: this gateway serves content if and only if the
 # payment transaction is visible on the BSV network. The invariant is
-# enforced by +#check_mempool!+ (below), which delegates to
-# +X402::BSV::NetworkVisibility.verify!+ — the same helper used by the
-# BRC-121 and BRC-105 gateways. ProofGateway deliberately passes a
-# broader +visible_statuses+ whitelist because it is verifying a tx it
-# has itself broadcast via ARC. See README "What x402-rack guarantees".
+# enforced by +#check_mempool!+ (below), which polls ARC directly. The
+# scheme semantics are deliberately different from BRC-121/BRC-105: the
+# client broadcasts first (proof-of-payment flow), and the server
+# confirms ARC has observed the broadcast. ProofGateway therefore
+# accepts a broader whitelist of ARC statuses — see
+# +ACCEPTABLE_MEMPOOL_STATUSES+ below and README "What x402-rack
+# guarantees".
 
 module X402
   module BSV
@@ -55,6 +57,11 @@ module X402
         MINED
       ].freeze
 
+      # Backoff schedule between ARC polls. One immediate attempt plus
+      # three retries → 4 attempts total, absorbing ~1.75s of propagation
+      # lag between the client's broadcast and ARC observing the tx.
+      RETRY_DELAYS_SECONDS = [0.25, 0.5, 1.0].freeze
+
       # @param nonce_provider [#call] callable returning nonce UTXO hash;
       #   receives (rack_request, payee:, amount:) kwargs.
       #   Profile B providers include :partial_tx (binary) in the response.
@@ -62,19 +69,14 @@ module X402
       # @param payee_locking_script_hex [String, nil] payee script (falls back to config)
       # @param challenge_store [#store!, #lookup, #consume!] per-instance
       #   challenge cache (default: in-memory, per-process).
-      # @param network_visibility_cache [NetworkVisibility::Cache, nil]
-      #   per-gateway positive-only TTL cache shielding ARC from
-      #   duplicate-submission bursts. Defaults to a fresh
-      #   +NetworkVisibility::Cache.new+.
       def initialize(nonce_provider:, arc_client:,
                      payee_locking_script_hex: nil, wallet: nil, challenge_secret: nil,
-                     challenge_store: nil, network_visibility_cache: nil)
+                     challenge_store: nil)
         super(payee_locking_script_hex: payee_locking_script_hex, wallet: wallet,
               challenge_secret: challenge_secret)
         @nonce_provider = nonce_provider
         @arc_client = arc_client
         @challenge_store = challenge_store || ChallengeStore::Memory.new
-        @network_visibility_cache = network_visibility_cache || NetworkVisibility::Cache.new
       end
 
       # Build a 402 challenge with merkleworks +X402-Challenge+ header.
@@ -270,40 +272,54 @@ module X402
 
       # Confirm ARC has observed the settlement transaction.
       #
-      # Delegates to +NetworkVisibility.verify!+ so retry policy, cache
-      # shape, and fault classification are shared with the BRC-121 /
-      # BRC-105 gateways. ProofGateway's +ACCEPTABLE_MEMPOOL_STATUSES+
-      # (8 values including +RECEIVED+, +STORED+,
-      # +ANNOUNCED_TO_NETWORK+, ...) answers a deliberately different
-      # question from the helper's default 3-value list: "is this tx
-      # propagating after MY broadcast?" rather than "has the client's
-      # tx actually landed on the network?". The list is passed as
-      # +visible_statuses:+ to keep both questions answerable through
-      # the same mechanic.
+      # ProofGateway's +ACCEPTABLE_MEMPOOL_STATUSES+ whitelist is
+      # deliberately broad (8 values including +RECEIVED+, +STORED+,
+      # +ANNOUNCED_TO_NETWORK+, ...) because the client has already
+      # broadcast — we only need confirmation that ARC is processing
+      # the tx, not that a separate node has observed it. Contrast
+      # with BRC-121/BRC-105 where the server broadcasts and the
+      # question is different.
       #
-      # Rescues and rewraps the helper's +VerificationError+ to
-      # preserve the operator-facing "mempool" wording. The status
-      # code is preserved verbatim — client fault surfaces as 402,
-      # ARC outage as 503 (previously 502; see CHANGELOG).
+      # Client fault (tx never seen, unknown to ARC after exhaustion)
+      # surfaces as 402; ARC outage / network fault as 503.
       def check_mempool!(txid)
-        NetworkVisibility.verify!(
-          arc_client: @arc_client,
-          txid: txid,
-          cache: @network_visibility_cache,
-          visible_statuses: ACCEPTABLE_MEMPOOL_STATUSES
+        last_status = nil
+        attempts = RETRY_DELAYS_SECONDS.length + 1
+
+        attempts.times do |i|
+          last_status = fetch_arc_status(txid)
+          break if ACCEPTABLE_MEMPOOL_STATUSES.include?(last_status)
+
+          sleep(RETRY_DELAYS_SECONDS[i]) if i < RETRY_DELAYS_SECONDS.length
+        end
+
+        return if ACCEPTABLE_MEMPOOL_STATUSES.include?(last_status)
+
+        raise VerificationError.new(
+          "transaction not yet visible in mempool (last status: #{last_status || "unknown"})",
+          status: 402
         )
-      rescue VerificationError => e
-        raise VerificationError.new(mempool_error_message(e), status: e.status)
       end
 
-      def mempool_error_message(error)
-        case error.status
-        when 503
-          "mempool check failed — #{error.reason}"
-        else
-          last_status = error.reason[/last status: (.+?)\)\z/, 1] || "unknown"
-          "transaction not yet visible in mempool (last status: #{last_status})"
-        end
+      # One ARC poll. Returns the tx_status string, or a non-visible
+      # marker string when ARC reports a client-fault code (e.g. 404).
+      # Raises +VerificationError(503)+ for ARC outages / network
+      # faults so +check_mempool!+ fails fast without burning retries.
+      def fetch_arc_status(txid)
+        @arc_client.status(txid).tx_status
+      rescue ::BSV::Network::BroadcastError => e
+        raise_mempool_outage! if e.status_code.is_a?(Integer) && e.status_code >= 500
+
+        e.status_code ? "HTTP #{e.status_code}" : "unknown"
+      rescue SocketError, Timeout::Error, Errno::ECONNREFUSED, Errno::ETIMEDOUT, Errno::EHOSTUNREACH
+        raise_mempool_outage!
+      end
+
+      def raise_mempool_outage!
+        raise VerificationError.new(
+          "mempool check failed — payment verification temporarily unavailable",
+          status: 503
+        )
       end
     end
   end

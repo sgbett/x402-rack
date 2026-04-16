@@ -218,7 +218,7 @@ RSpec.describe X402::BSV::ProofGateway do
 
     it "surfaces ARC outage as VerificationError(status: 503)" do
       # Zero out retry delays so the spec doesn't wait in real time.
-      stub_const("X402::BSV::NetworkVisibility::RETRY_DELAYS_SECONDS", [].freeze)
+      stub_const("X402::BSV::ProofGateway::RETRY_DELAYS_SECONDS", [].freeze)
 
       failing_arc = Object.new
       def failing_arc.status(_txid)
@@ -258,7 +258,7 @@ RSpec.describe X402::BSV::ProofGateway do
     end
 
     it "retries the mempool check until ARC reports an acceptable status" do
-      stub_const("X402::BSV::NetworkVisibility::RETRY_DELAYS_SECONDS", [0.0, 0.0, 0.0].freeze)
+      stub_const("X402::BSV::ProofGateway::RETRY_DELAYS_SECONDS", [0.0, 0.0, 0.0].freeze)
 
       # ARC first reports UNKNOWN (the tx hasn't been observed yet),
       # then SEEN_ON_NETWORK on the next poll. The gateway should
@@ -299,7 +299,7 @@ RSpec.describe X402::BSV::ProofGateway do
     end
 
     it "surfaces the last observed tx_status when all retries fail" do
-      stub_const("X402::BSV::NetworkVisibility::RETRY_DELAYS_SECONDS", [0.0].freeze)
+      stub_const("X402::BSV::ProofGateway::RETRY_DELAYS_SECONDS", [0.0, 0.0, 0.0].freeze)
 
       arc_stub = Object.new
       def arc_stub.status(_txid)
@@ -331,7 +331,43 @@ RSpec.describe X402::BSV::ProofGateway do
       proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
 
       expect { stuck_gw.settle!("X402-Proof", proof_header, request, route) }
-        .to raise_error(X402::VerificationError, /UNKNOWN/)
+        .to raise_error(X402::VerificationError, /UNKNOWN/) { |e| expect(e.status).to eq(402) }
+    end
+
+    it "surfaces ARC 5xx as VerificationError(status: 503)" do
+      stub_const("X402::BSV::ProofGateway::RETRY_DELAYS_SECONDS", [].freeze)
+
+      failing_arc = Object.new
+      def failing_arc.status(_txid)
+        raise BSV::Network::BroadcastError.new("ARC upstream failure", status_code: 503)
+      end
+
+      failing_gw = described_class.new(
+        nonce_provider: nonce_provider,
+        arc_client: failing_arc,
+        payee_locking_script_hex: payee_hex
+      )
+
+      request = mock_request
+      headers = failing_gw.challenge_headers(request, route)
+      challenge = X402::Challenge.from_header(headers["X402-Challenge"])
+
+      transaction = BSV::Transaction::Transaction.new
+      transaction.add_input(BSV::Transaction::TransactionInput.new(
+                              prev_tx_id: [nonce_txid].pack("H*").reverse,
+                              prev_tx_out_index: 0,
+                              unlocking_script: BSV::Script::Script.new("\x00".b)
+                            ))
+      transaction.add_output(BSV::Transaction::TransactionOutput.new(satoshis: 50, locking_script: payee_script))
+
+      proof_data = {
+        challenge_sha256: challenge.sha256_hex,
+        payment: { rawtx_b64: Base64.strict_encode64(transaction.to_binary), txid: transaction.txid_hex }
+      }
+      proof_header = X402::Base64Url.encode(JSON.generate(proof_data))
+
+      expect { failing_gw.settle!("X402-Proof", proof_header, request, route) }
+        .to raise_error(X402::VerificationError, /mempool/) { |e| expect(e.status).to eq(503) }
     end
 
     it "raises when the referenced challenge was never issued by this server" do
