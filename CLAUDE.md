@@ -33,6 +33,26 @@ bundle exec rubocop -A
 bundle exec rake
 ```
 
+## Testnet credentials
+
+E2E specs (`spec/e2e/**/*.rb`, tagged `:e2e`, excluded from default `rake`) need credentials in `.env` at the repo root. All WIFs listed there **hold spendable testnet funds** — no need to fund them before running specs:
+
+- `ARC_URL` — testnet ARCADE endpoint
+- `ARC_API_KEY` — ARC bearer token
+- `TREASURY_WIF` — server wallet (used as `SERVER_WIF` where the BRC-105 / BRC-121 e2e specs read that var)
+- `CLIENT_WIF` — client wallet
+- `DELEGATOR_WIF` — used by proof-gateway delegated flows
+- `PAYEE_SCRIPT` — hex locking script for PayGateway e2e
+
+`.env` is gitignored. The e2e specs do not auto-load it — source manually before running:
+
+```bash
+set -a; source .env; set +a
+# The BRC-105 / BRC-121 specs read SERVER_WIF, which .env exposes as TREASURY_WIF:
+export SERVER_WIF="$TREASURY_WIF"
+bundle exec rspec spec/e2e/brc121_gateway_e2e_spec.rb --tag e2e
+```
+
 ## Specifications
 
 This project implements published protocol specifications (BRC-105, BRC-29, etc.). When writing or modifying code that implements a spec, consult the spec directly (via `bsv-protocol-docs` MCP) and verify conformance — including optional features unless there is a documented reason to omit them. Tests should be anchored to spec requirements, not just implementation behaviour.
