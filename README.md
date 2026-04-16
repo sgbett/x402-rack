@@ -19,6 +19,20 @@ Two failure modes are distinguished in the HTTP response:
 
 **ARC is a hard runtime dependency in the critical path.** Operators should monitor ARC reachability and latency the same way they monitor their own database. If ARC is down, x402-rack cannot settle payments — no broadcast, no content. There is no kill-switch: vendor-broadcast is not optional, because without it there is no meaningful enforcement. For dev/staging flows, mock the gateway or avoid enabling payment middleware on un-gated routes.
 
+## Mental model: x402-rack is the checkout
+
+```
+Customer        →   x402-rack (checkout)   →   Vendor (the app)
+                    ├─ verify tx pays right
+                    ├─ broadcast to ARC      ← cash register ding
+                    ├─ record in wallet      ← till drawer closes
+                    └─ return 200            → vendor serves content
+```
+
+x402-rack is the point-of-sale terminal sitting between the customer and the merchant's backend. The customer presents a signed transaction, the checkout settles it on-chain, and only then does the vendor's app deliver the goods. Same role a card reader plays at a physical till.
+
+This framing explains the design directly: vendor-broadcast is "the card reader dials the bank", 503 is "TERMINAL DOWN", 402 is "CARD DECLINED", no kill-switch means a till that can't refuse to process payments isn't a till. See [docs/architecture.md](docs/architecture.md#mental-model-x402-rack-is-the-checkout) for the full mapping.
+
 ## Installation
 
 ```ruby

@@ -13,6 +13,65 @@ Failures bifurcate cleanly in the HTTP response:
 
 See [schemes/brc-121.md](schemes/brc-121.md#vendor-broadcast) and [schemes/brc-105.md](schemes/brc-105.md#vendor-broadcast) for the per-gateway specifics.
 
+## Mental model: x402-rack is the checkout
+
+The clearest way to understand x402-rack is to stop thinking of it as a "payment verifier" and start thinking of it as a **point-of-sale terminal** sitting between the customer and the merchant's back office.
+
+```
+Customer                 x402-rack                    Vendor (the app)
+────────                 ─────────                    ────────────────
+                       "400 sats please"
+Builds tx            ←
+Hands signed BEEF    →   "let me ring that up"
+                         ├─ verify the tx pays right
+                         ├─ broadcast to ARC      ← cash register ding
+                         ├─ record in wallet      ← till drawer closes
+                         └─ stamp receipt
+                       →  "paid. proceed."
+                                                   ← serves the content
+```
+
+The customer presents payment. The checkout processes it — settling on-chain and recording the receipt — and only then does the vendor's app deliver the goods. The same role a card reader plays at a physical till: sitting between the customer and the merchant's backend, doing the settlement mechanics so neither party has to.
+
+### Point-of-sale equivalents
+
+| Physical till | x402-rack |
+|---|---|
+| Card reader | BEEF header parser |
+| Bank auth + settlement | `arc.broadcast(subject_tx)` |
+| Till drawer | `wallet.internalize_action` |
+| Receipt printer | `SettlementResult` with receipt headers |
+| "APPROVED / DECLINED" display | HTTP 200 / 402 |
+| "TERMINAL UNAVAILABLE" | HTTP 503 |
+
+### Why this framing matters
+
+It explains the design decisions that otherwise look arbitrary:
+
+- **Why does the vendor broadcast?** Because the checkout takes the card and runs the transaction. It doesn't ask the customer to run a parallel transaction with the bank and present proof — it *is* the settlement point.
+- **Why is ARC idempotency the load-bearing property?** Because the card reader always dials the bank, even if you've already paid somewhere else with the same card today. The bank handles deduplication; the reader doesn't need to second-guess.
+- **Why no `verify_on_chain` kill-switch?** Because a till that lets you turn off "actually process the payment" isn't a till any more. The checkout either settles or refuses — there's no halfway.
+- **Why does ARC failure return 503, not 402?** Because an unreachable bank is a shop problem, not a customer problem. The sign reads "TERMINAL DOWN — please try again", not "YOUR CARD IS DECLINED".
+- **Why must the `arc_client` be configured?** Because a checkout without a card reader isn't a checkout. The invariant cannot be enforced without the network-write primitive.
+
+### The pivot from 0.10.2 to 0.11.0
+
+This model also explains why 0.10.2 felt wrong. The status-check approach (0.10.2) was like a till that asks "did you pay the bank yet?" — making the customer do the transaction and then showing proof. The vendor-broadcast approach (0.11.0) is like a till that *takes* the card and *runs* the transaction. Cleaner, and matches what retailers actually do.
+
+```
+0.10.2 (status-check — wrong):          0.11.0 (vendor-broadcast — right):
+─────────────────────────────          ──────────────────────────────────
+Customer: I paid, here's proof         Customer: here's my card
+Till:     let me check with the bank   Till:     thank you [dip, beep]
+Bank:     status: SEEN_ON_NETWORK      Bank:     approved
+Till:     proceed                      Till:     proceed
+```
+
+Same outcome when everything works. Different failure modes:
+
+- Under 0.10.2, a customer who hadn't actually paid was rejected *after* the till spent an unpredictable amount of time polling the bank (propagation lag).
+- Under 0.11.0, the till just runs the transaction itself — either it succeeds (tx is on-chain) or ARC refuses it (genuine rejection with a clear reason). No polling window, no noSend corner case.
+
 ## Middleware as Dispatcher (`X402::Middleware`)
 
 The Rack middleware is a **pure dispatcher** — the gatekeeper. It has no blockchain knowledge. It:
