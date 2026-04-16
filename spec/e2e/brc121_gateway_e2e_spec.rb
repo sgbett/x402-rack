@@ -357,10 +357,15 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       # TDD guard for #158: this assertion FAILS on 0.10.1 (server returns 200 without verifying).
       # Once #158 ships, the gateway's on-chain visibility check returns 402 and this test passes.
       # DO NOT "fix" this test by changing the expected status on master. The failure IS the regression.
+      #
+      # The reason-string regex is intentionally broad — #158's implementer defines the exact
+      # operator-facing wording. What MUST hold: status 402, and the reason communicates that
+      # the payment was not visible on-chain. If the wording diverges, update the regex to
+      # match the chosen phrase rather than narrowing the implementation.
       expect { gateway.settle!("x-bsv-beef", nil, request, route) }
         .to raise_error(X402::VerificationError) { |e|
           expect(e.status).to eq(402)
-          expect(e.reason).to match(/not visible|payment verification/i)
+          expect(e.reason).to match(/not visible|payment verification|on.chain|unconfirmed|un.?broadcast/i)
         }
 
       E2ELogger.success("Exploit rejected — NO PAY → NO CONTENT invariant holds")
@@ -408,8 +413,9 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       }
     end
 
+    let(:server_identity_key_hex) { server_wallet.get_public_key(identity_key: true).fetch(:public_key) }
+
     it "rejects a stale x-bsv-time outside the 30s freshness window" do
-      server_identity_key_hex = server_wallet.get_public_key(identity_key: true).fetch(:public_key)
       proof = build_valid_proof(
         client_wallet: client_wallet,
         server_identity_key_hex: server_identity_key_hex,
@@ -434,9 +440,7 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
 
     %w[x-bsv-beef x-bsv-sender x-bsv-nonce x-bsv-time x-bsv-vout].each do |header|
       it "rejects when #{header} is missing" do
-        server_identity_key_hex = server_wallet.get_public_key(identity_key: true).fetch(:public_key)
         proof = build_valid_proof(
-          gateway: gateway,
           client_wallet: client_wallet,
           server_identity_key_hex: server_identity_key_hex,
           amount: 500
