@@ -6,10 +6,17 @@ require "base64"
 require "bsv-sdk"
 
 # NO PAY -> NO CONTENT: this gateway serves content if and only if the
-# vendor successfully broadcasts the payment transaction to the BSV
-# network. The invariant is enforced by +#broadcast!+ (below), which
-# runs after payment output verification but BEFORE +consume_prefix!+
-# and +internalize_action+ — the ordering matters for retry semantics.
+# vendor has verified that the payment transaction was accepted by ARC.
+# The invariant is enforced by +#settle_payment!+ (below), which runs
+# after payment output verification but BEFORE +consume_prefix!+ and
+# +internalize_action+ — the ordering matters for retry semantics.
+#
+# Settlement is BEEF-type-aware:
+# - Full BEEF (+subject_txid+ nil): the client has NOT broadcast — the
+#   vendor broadcasts via +arc.broadcast+.
+# - Atomic BEEF (+subject_txid+ set): the client signals it already
+#   broadcast — the vendor verifies via +arc.status+.
+#
 # See README "What x402-rack guarantees".
 
 module X402
@@ -36,9 +43,10 @@ module X402
       # @param key_deriver [BSV::Wallet::KeyDeriver] provides identity key + BRC-42 derivation
       # @param prefix_store [#store!, #valid?, #consume!] replay protection for derivation prefixes
       # @param wallet [#internalize_action] BRC-100 wallet for payment internalisation
-      # @param arc_client [#broadcast, nil] ARC client used by the gateway to
-      #   broadcast the payment transaction. Required at +settle!+ time — a
-      #   nil +arc_client+ silently breaks the NO PAY -> NO CONTENT invariant,
+      # @param arc_client [#broadcast, #status, nil] ARC client used by the
+      #   gateway to settle the payment transaction (broadcast Full BEEF,
+      #   verify Atomic BEEF). Required at +settle!+ time — a nil
+      #   +arc_client+ silently breaks the NO PAY -> NO CONTENT invariant,
       #   so we fail loudly instead. Construction still permits +nil+ for
       #   unit-test ergonomics; production paths always wire ARC via
       #   +Configuration#shared_arc_client+.
@@ -99,17 +107,17 @@ module X402
         prefix = payment["derivationPrefix"]
         suffix = payment["derivationSuffix"]
         validate_prefix_and_suffix!(prefix, suffix)
-        subject_tx = parse_beef_transaction(payment["transaction"])
+        beef, subject_tx = parse_beef_transaction(payment["transaction"])
         log_derivation_inputs(prefix, suffix, counterparty)
         expected_script = derive_payment_script(prefix, suffix, rack_request)
         log_expected_script(expected_script)
         log_tx_outputs(subject_tx, required_sats, expected_script)
         paid_sats, output_index = verify_payment_output!(subject_tx, required_sats, expected_script)
-        # Broadcast BEFORE consume_prefix! so a legitimate retry after a
-        # re-broadcast can still use the prefix. Consuming first would
-        # make the subsequent attempt fail the replay check regardless
-        # of whether the client fixed their broadcast.
-        broadcast!(subject_tx, route)
+        # Settle BEFORE consume_prefix! so a legitimate retry after a
+        # transient settlement failure can still use the prefix. Consuming
+        # first would make the subsequent attempt fail the replay check
+        # regardless of whether the client fixed their broadcast.
+        settle_payment!(beef, subject_tx, route)
         consume_prefix!(prefix)
         internalize_payment!(
           transaction_b64: payment["transaction"],
@@ -124,10 +132,22 @@ module X402
 
       private
 
-      # Broadcast the payment transaction via ARC. The vendor — not the
-      # client — is the settlement authority: a 200 response means ARC
-      # accepted the tx. Structurally valid BEEF proves nothing about
-      # whether the client actually broadcast.
+      # Settle the payment via ARC. The vendor — not the client — is the
+      # settlement authority: a 2xx from ARC means the network accepted
+      # the tx. Structurally valid BEEF proves nothing about whether the
+      # client actually broadcast.
+      #
+      # Settlement is BEEF-type-aware:
+      # - Full BEEF (+subject_txid+ nil): client hasn't broadcast →
+      #   vendor broadcasts via +arc.broadcast+.
+      # - Atomic BEEF (+subject_txid+ set): client signals it already
+      #   broadcast → vendor verifies via +arc.status+.
+      #
+      # NOTE: if ARC hasn't seen the tx yet on the Atomic path
+      # (propagation lag from a just-broadcast client), status raises
+      # BroadcastError. In practice this hasn't been observed as an
+      # issue. If it becomes one, add a bounded retry here — but
+      # observe first, don't pre-build.
       #
       # A nil +@arc_client+ silently breaks the NO PAY -> NO CONTENT
       # invariant, so we raise a configuration error instead of quietly
@@ -138,20 +158,26 @@ module X402
       # - +BroadcastError+ with +status_code >= 500+   → 503 (ARC outage)
       # - +BroadcastError+ otherwise                    → 402 (client's tx rejected)
       # - Network errors (+SocketError+, +Timeout+, +Errno::*+) → 503
-      def broadcast!(subject_tx, route)
+      def settle_payment!(beef, subject_tx, route)
         unless @arc_client
           raise VerificationError.new(
-            "gateway misconfigured: arc_client is required for payment broadcast", status: 500
+            "gateway misconfigured: arc_client is required for payment settlement", status: 500
           )
         end
 
-        @arc_client.broadcast(subject_tx, wait_for: route.arc_wait_for)
+        if beef.subject_txid
+          # Atomic BEEF: client signals they already broadcast → verify via GET.
+          @arc_client.status(subject_tx.txid_hex)
+        else
+          # Full BEEF: client wants us to broadcast → POST.
+          @arc_client.broadcast(subject_tx, wait_for: route.arc_wait_for)
+        end
       rescue ::BSV::Network::BroadcastError => e
         if e.status_code.is_a?(Integer) && e.status_code >= 500
           raise VerificationError.new("payment verification temporarily unavailable", status: 503)
         end
 
-        raise VerificationError.new("payment broadcast rejected: #{e.message}", status: 402)
+        raise VerificationError.new("payment not accepted: #{e.message}", status: 402)
       rescue SocketError, Timeout::Error, Errno::ECONNREFUSED, Errno::ETIMEDOUT, Errno::EHOSTUNREACH
         raise VerificationError.new("payment verification temporarily unavailable", status: 503)
       end
@@ -198,14 +224,21 @@ module X402
 
         raw = Base64.strict_decode64(transaction_b64)
         beef = ::BSV::Transaction::Beef.from_binary(raw)
+
+        # Atomic BEEF embeds a subject_txid; Full BEEF does not — derive
+        # it from the last raw transaction in the bundle (dependency order
+        # puts the subject last).
+        txid = beef.subject_txid || beef.transactions.reverse_each.find(&:transaction)&.txid
+        raise VerificationError.new("no subject transaction in BEEF bundle", status: 400) unless txid
+
         # find_atomic_transaction wires ancestry (source_transaction on each
         # input). Required so arc.broadcast(subject_tx) can emit EF —
         # otherwise we fall back to raw hex and ARC rejects broadcasts whose
         # parents are unconfirmed and only present in the BEEF. See #177.
-        subject_tx = beef.find_atomic_transaction(beef.subject_txid)
+        subject_tx = beef.find_atomic_transaction(txid)
         raise VerificationError.new("no subject transaction in BEEF bundle", status: 400) unless subject_tx
 
-        subject_tx
+        [beef, subject_tx]
       rescue ArgumentError
         raise VerificationError.new("invalid base64 in transaction", status: 400)
       rescue VerificationError
