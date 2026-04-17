@@ -217,7 +217,11 @@ module X402
       def parse_beef_transaction(transaction_b64)
         raw = Base64.strict_decode64(transaction_b64)
         beef = ::BSV::Transaction::Beef.from_binary(raw)
-        subject_tx = beef.find_transaction(beef.subject_txid)
+        # find_atomic_transaction wires ancestry (source_transaction on each
+        # input). Required so arc.broadcast(subject_tx) can emit EF —
+        # otherwise we fall back to raw hex and ARC rejects broadcasts whose
+        # parents are unconfirmed and only present in the BEEF. See #177.
+        subject_tx = beef.find_atomic_transaction(beef.subject_txid)
         raise VerificationError.new("no subject transaction in BEEF bundle", status: 400) unless subject_tx
 
         subject_tx
