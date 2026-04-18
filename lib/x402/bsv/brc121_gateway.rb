@@ -131,11 +131,15 @@ module X402
         output_index = parse_output_index!(headers["x-bsv-vout"])
         beef, subject_tx = parse_beef_transaction(headers["x-bsv-beef"])
 
-        check_txid_unique!(subject_tx.txid_hex)
-
         paid_sats = verify_payment_output!(subject_tx, output_index, required_sats)
 
         settle_payment!(beef, subject_tx, route)
+
+        # Replay guard AFTER settle_payment! so a transient ARC failure
+        # (503, timeout, propagation lag on the Atomic BEEF status path)
+        # doesn't consume the txid — the client can retry with the same
+        # transaction. Mirrors BRC105Gateway's consume-after-settle ordering.
+        check_txid_unique!(subject_tx.txid_hex)
 
         result = internalize_payment!(
           beef_b64: headers["x-bsv-beef"],
@@ -275,7 +279,7 @@ module X402
       def settle_payment!(beef, subject_tx, route)
         unless @arc_client
           logger.error "[brc121] arc_client is not configured"
-          raise VerificationError.new("payment broadcaster not configured", status: 500)
+          raise VerificationError.new("arc_client is required for payment settlement", status: 500)
         end
 
         if beef.subject_txid

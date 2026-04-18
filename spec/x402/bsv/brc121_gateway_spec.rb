@@ -601,13 +601,13 @@ RSpec.describe X402::BSV::BRC121Gateway do
       context "when arc_client is nil" do
         let(:gateway) { described_class.new(wallet: wallet, txid_store: txid_store, arc_client: nil) }
 
-        it "raises VerificationError(500) because the broadcaster is required" do
+        it "raises VerificationError(500) because arc_client is required" do
           env = paid_request_env(beef_b64: beef_b64)
 
           expect { gateway.settle!("x-bsv-beef", nil, mock_request(env), route) }
             .to raise_error(X402::VerificationError) { |e|
               expect(e.status).to eq(500)
-              expect(e.reason).to match(/broadcaster/i)
+              expect(e.reason).to match(/arc_client is required/i)
             }
         end
 
