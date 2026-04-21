@@ -52,7 +52,7 @@ Minimum monitoring:
 
 ### No kill-switch
 
-There is no `verify_on_chain` toggle. Vendor-broadcast is not optional — without it there is no meaningful enforcement of NO PAY → NO CONTENT, and a "partial enforcement" mode would be worse than either extreme (it would give the wrong impression of safety). Earlier releases (0.10.x) shipped a kill-switch; 0.11.0 removes it.
+There is no toggle to skip on-chain verification. ARC confirmation is not optional — without it there is no meaningful enforcement of NO PAY → NO CONTENT, and a "partial enforcement" mode would be worse than either extreme (it would give the wrong impression of safety).
 
 For dev or staging environments that don't want real payments: mock the gateway, or don't enable payment middleware on the routes you want un-gated. `config.protect` is opt-in per-route — the simplest solution is usually not to protect the route at all in development.
 
