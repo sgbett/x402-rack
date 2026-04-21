@@ -10,7 +10,7 @@ The middleware is a pure dispatcher — it matches routes, issues payment challe
 
 That is the whole job. Each gateway enforces it according to its spec:
 
-- **PayGateway** (our Coinbase v2 protocol) broadcasts via ARC — vendor-broadcast is our design choice.
+- **PayGateway** ([x402 protocol](https://docs.x402.org/)) broadcasts via ARC — the server settles the payment.
 - **BRC121Gateway** and **BRC105Gateway** verify the client's broadcast via `arc_client.status(txid)` — per BRC-121 §5 and BRC-105 §6.3, the client broadcasts.
 - **ProofGateway** checks ARC status — client broadcasts first (the merkleworks scheme demands it).
 
@@ -105,7 +105,7 @@ Clients can pay using whichever protocol they support; the middleware dispatches
 
 | Gateway | Wallet required? | Setup required | Status |
 |---------|-----------------|----------------|--------|
-| `PayGateway` (Coinbase v2) | No — works with `operator_wallet_url` alone | Auto-enabled | Stable |
+| `PayGateway` (x402) | No — works with `operator_wallet_url` alone | Auto-enabled | Stable |
 | `BRC121Gateway` (BRC-121) | Yes (local or remote) | Auto-enabled when `wallet:` set | Stable |
 | `BRC105Gateway` (BRC-105) | Yes (local or remote) | `config.enable :brc105_gateway` | Transitional |
 | `ProofGateway` (merkleworks) | No | `config.enable :proof_gateway` | Experimental |
@@ -176,7 +176,7 @@ Backwards-compat alternatives still work: `config.server_wif = ENV["SERVER_WIF"]
 
 Four BSV settlement schemes are supported:
 
-- **BSV-pay** (Coinbase v2 headers) — server broadcasts via ARC (defaults to ARCADE). Partial transaction template, unique derived addresses per payment. Works without a wallet via `operator_wallet_url`.
+- **BSV-pay** ([x402 protocol](https://docs.x402.org/) headers) — server broadcasts via ARC (defaults to ARCADE). Partial transaction template, unique derived addresses per payment. Works without a wallet via `operator_wallet_url`.
 - **BRC-121** (BSV Association simple) — stateless, BRC-100 wallet-native, zero config.
 - **BRC-105** (BSV Association authenticated) — settlement via `wallet.internalize_action`. Transitional; requires BRC-103 for spec compliance.
 - **BSV-proof** (merkleworks) — experimental; client broadcasts, server checks mempool.

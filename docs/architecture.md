@@ -6,7 +6,7 @@
 
 This is the one job. Each gateway enforces it according to its spec:
 
-- **PayGateway** broadcasts the tx to ARC itself (our protocol, our design).
+- **PayGateway** broadcasts the tx to ARC itself (x402 protocol — server settles).
 - **BRC121Gateway** and **BRC105Gateway** verify the client's broadcast via `arc_client.status(txid)` — per BRC-121 §5 and BRC-105 §6.3, the client broadcasts.
 - **ProofGateway** checks ARC status (client broadcasts first, per the merkleworks scheme).
 
@@ -52,7 +52,7 @@ The customer presents payment. The checkout processes it — settling on-chain a
 
 It explains the design decisions that otherwise look arbitrary:
 
-- **Why does PayGateway broadcast?** Because that's our protocol — the checkout takes the card and runs the transaction. BRC-121 and BRC-105 have the customer run the transaction first (the spec says so); the checkout just verifies it went through.
+- **Why does PayGateway broadcast?** The x402 protocol has the server settle the payment. The checkout takes the card and runs the transaction. BRC-121 and BRC-105 have the customer run the transaction first (the spec says so); the checkout just verifies it went through.
 - **Why does ARC failure return 503, not 402?** Because an unreachable bank is a shop problem, not a customer problem. The sign reads "TERMINAL DOWN — please try again", not "YOUR CARD IS DECLINED".
 - **Why must the `arc_client` be configured?** Because a checkout without a way to check the bank isn't a checkout. Whether we broadcast (PayGateway) or verify (BRC-121/BRC-105), the invariant cannot be enforced without ARC.
 
@@ -61,7 +61,7 @@ It explains the design decisions that otherwise look arbitrary:
 Each gateway follows its spec's settlement model:
 
 ```
-PayGateway (our protocol — vendor broadcasts):
+PayGateway (x402 protocol — server broadcasts):
 ──────────────────────────────────────────────
 Customer: here's my card
 Till:     thank you [dip, beep]
@@ -115,7 +115,7 @@ The boundary test: could someone write `X402::EVM::Gateway` implementing this in
 
 ### Built-in Gateways
 
-- **`X402::BSV::PayGateway`** — Coinbase v2 headers, server broadcasts via ARC. See [schemes/bsv-pay.md](schemes/bsv-pay.md).
+- **`X402::BSV::PayGateway`** — x402 protocol headers, server broadcasts via ARC. See [schemes/bsv-pay.md](schemes/bsv-pay.md).
 - **`X402::BSV::BRC121Gateway`** — BRC-121 simple payments, stateless, BRC-100 wallet-native. See [schemes/brc-121.md](schemes/brc-121.md).
 - **`X402::BSV::BRC105Gateway`** — BRC-105 authenticated payments, BRC-29 derived addresses, AtomicBEEF transactions. See [schemes/brc-105.md](schemes/brc-105.md).
 - **`X402::BSV::ProofGateway`** — merkleworks headers, client broadcasts, server checks mempool. See [schemes/bsv-proof.md](schemes/bsv-proof.md).
@@ -134,7 +134,7 @@ Different x402 ecosystems use different HTTP headers. A server can send **multip
 \* `x-bsv-payment-identity-key` is omitted when BRC-103 middleware is present upstream.
 
 Header namespaces are reserved per ecosystem:
-- `Payment-*` — Coinbase v2 / our PayGateway
+- `Payment-*` — x402 protocol / PayGateway
 - `x-bsv-*` — BRC-121 and BRC-105 / BSV Association (our BRC121Gateway and BRC105Gateway)
 - `X402-*` — merkleworks / our ProofGateway
 

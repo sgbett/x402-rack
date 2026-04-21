@@ -12,7 +12,7 @@ The middleware is a pure dispatcher — no blockchain knowledge, no keys. Gatewa
 
 Four BSV payment schemes:
 
-- **BSV-pay** — server broadcasts via ARC. Coinbase v2 headers. Minimal infrastructure.
+- **BSV-pay** — server broadcasts via ARC. x402 protocol headers. Minimal infrastructure.
   → [docs/schemes/bsv-pay.md](docs/schemes/bsv-pay.md)
 
 - **BRC-121** — client broadcasts, server verifies via ARC status. Stateless, zero-config. BSV Association spec.
@@ -38,7 +38,7 @@ HMAC payToSig, nonce provenance verification (0xC3), OP_RETURN binding, threat m
 
 ## Ecosystem
 
-Coinbase v2, merkleworks, BRC-105. Header namespaces. Our position.
+x402, BRC-121, BRC-105, merkleworks. Header namespaces. Ecosystem positioning.
 
 → [docs/ecosystem.md](docs/ecosystem.md)
 

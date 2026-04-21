@@ -17,7 +17,7 @@
 
 Key:
 
-[1] base64(PaymentRequired JSON) — Coinbase v2 format with accepts array, extra.partialTx, extra.payToSig
+[1] base64(PaymentRequired JSON) — x402 format with accepts array, extra.partialTx, extra.payToSig
 [2] base64(PaymentPayload JSON)  — accepted block + payload.rawtx + payload.txid
 [3] base64(SettlementResponse JSON) — success, transaction, network
 

@@ -4,7 +4,7 @@ The default gateway. Direct peer-to-peer payment — client pays server, server 
 
 ## Description
 
-Server broadcasts via ARC. Uses Coinbase v2 header spec. Minimal infrastructure — ARC only, no treasury, no nonces.
+Server broadcasts via ARC. Implements the [x402 protocol](https://docs.x402.org/) header spec with BSV as the settlement network. Minimal infrastructure — ARC only, no treasury, no nonces.
 
 ## Headers
 
@@ -16,7 +16,7 @@ Server broadcasts via ARC. Uses Coinbase v2 header spec. Minimal infrastructure 
 
 ## Challenge
 
-Coinbase v2 `PaymentRequired` structure with BSV in the `accepts` array:
+x402 `PaymentRequired` structure with BSV in the `accepts` array:
 
 ```json
 {

@@ -8,7 +8,7 @@ The middleware is a pure dispatcher — it matches routes, issues payment challe
 
 **Zero-config gateways** — enabled automatically when you set `wallet:`:
 
-- [**BSV-pay**](schemes/bsv-pay.md) (Coinbase v2 headers) — server broadcasts via ARC. Partial transaction template, unique derived addresses per payment.
+- [**BSV-pay**](schemes/bsv-pay.md) (x402 protocol headers) — server broadcasts via ARC. Partial transaction template, unique derived addresses per payment.
 - [**BRC-121**](schemes/brc-121.md) (BSV Association `x-bsv-*` simple) — stateless server, BRC-100 wallet handles validation and replay detection via `internalize_action`. No PrefixStore, no challenge_secret, no nonce store.
 
 **Specialist gateways** — explicit opt-in required:
