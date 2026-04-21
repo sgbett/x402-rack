@@ -229,7 +229,8 @@ module X402
         beef = ::BSV::Transaction::Beef.from_binary(raw)
         txid = beef.subject_txid || beef.transactions.reverse_each.find(&:transaction)&.txid
         beef.find_atomic_transaction(txid)
-      rescue StandardError
+      rescue StandardError => e
+        logger.debug "[pay-gateway] BEEF extraction failed, falling back to raw tx: #{e.class}: #{e.message}"
         nil
       end
 
