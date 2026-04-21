@@ -6,7 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 x402-rack is a Ruby gem providing Rack middleware for the x402 protocol (BSV settlement-gated HTTP). Requires Ruby >= 3.1.
 
-The core invariant is **NO PAY → NO CONTENT**: content is served if and only if the vendor has successfully broadcast the payment transaction to the BSV network. `BRC121Gateway` and `BRC105Gateway` broadcast the client's signed BEEF to ARC themselves between output verification and `internalize_action` — ARC is idempotent, so a client that has already broadcast is fine. `ProofGateway` keeps its client-broadcasts-first, server-reads-status semantics (the scheme demands it). ARC is a hard runtime dependency; ARC rejections return 402, ARC outages return 503. There is no kill-switch — vendor-broadcast is not optional.
+The core invariant is **NO PAY → NO CONTENT**: content is served if and only if the payment transaction is confirmed on the BSV network via ARC.
+
+Each gateway implements its spec's settlement model:
+- **PayGateway** (our Coinbase v2 protocol): the server broadcasts via ARC. Vendor-broadcast is our design.
+- **BRC121Gateway** (BRC-121 spec): the client broadcasts. The server verifies via `arc_client.status(txid)`, then calls `internalizeAction`. `BroadcastError` = NO PAY.
+- **BRC105Gateway** (BRC-105 spec): the client broadcasts (§6.3). The server verifies via `arc_client.status(txid)`, then calls `internalizeAction`. `BroadcastError` = NO PAY.
+- **ProofGateway** (merkleworks): the client broadcasts. The server checks mempool status via ARC.
 
 ## Commands
 

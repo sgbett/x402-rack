@@ -189,14 +189,6 @@ RSpec.describe X402::BSV::BRC105Gateway do
       Base64.strict_encode64(atomic_binary)
     end
 
-    # Full BEEF: subject_txid nil → settle_payment! calls arc.broadcast
-    def build_full_beef_b64(transaction)
-      beef = BSV::Transaction::Beef.new
-      beef.merge_transaction(transaction)
-      Base64.strict_encode64(beef.to_binary)
-    end
-
-    # Default proof payload uses Atomic BEEF (existing behaviour)
     def build_proof_payload(prefix:, suffix:, transaction:)
       JSON.generate({
                       "derivationPrefix" => prefix,
@@ -205,24 +197,11 @@ RSpec.describe X402::BSV::BRC105Gateway do
                     })
     end
 
-    # Full BEEF proof payload for vendor-broadcast specs
-    def build_full_beef_proof_payload(prefix:, suffix:, transaction:)
-      JSON.generate({
-                      "derivationPrefix" => prefix,
-                      "derivationSuffix" => suffix,
-                      "transaction" => build_full_beef_b64(transaction)
-                    })
-    end
-
     before do
       prefix_store.store!(prefix)
       allow(wallet).to receive(:internalize_action).and_return({ accepted: true })
-      # Default: ARC accepts both broadcast and status. The default fixture
-      # is Atomic BEEF, so +status+ is the primary path; +broadcast+ is
-      # stubbed for Full BEEF specs. Individual contexts override these to
-      # drive rejection / outage / network-error paths.
+      # Default: ARC confirms the tx is on-chain. Status-only — no broadcast.
       allow(arc_client).to receive(:status).and_return(instance_double(BSV::Network::BroadcastResponse))
-      allow(arc_client).to receive(:broadcast).and_return(instance_double(BSV::Network::BroadcastResponse))
     end
 
     # §6.4 step 2: "Ensuring the output script pays to the correct derivation"
@@ -413,215 +392,85 @@ RSpec.describe X402::BSV::BRC105Gateway do
       end
     end
 
-    # BEEF-type-aware settlement (#180): the vendor settles the payment
-    # via ARC between output verification and +consume_prefix!+.
-    # Full BEEF (no subject_txid) → arc.broadcast; Atomic BEEF
-    # (subject_txid set) → arc.status. Settlement runs BEFORE
-    # consume_prefix! and internalize_action.
-    context "vendor settlement (#180)" do
-      # --- Full BEEF (vendor broadcasts) ---
-      context "Full BEEF (vendor broadcasts)" do
-        it "calls arc_client.broadcast with subject tx and route's wait_for" do
-          waiting_route = X402::Configuration::Route.new(
-            http_method: "GET", path: "/premium", amount_sats: 1000, arc_wait_for: "SEEN_ON_NETWORK"
-          )
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_full_beef_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+    # NO PAY -> NO CONTENT: verify the tx is on-chain via ARC status
+    # before consuming prefix or calling internalizeAction.
+    # Client broadcasts (BRC-105 §6.3); we just check status.
+    context "on-chain verification (NO PAY -> NO CONTENT)" do
+      it "calls arc_client.status with the subject txid" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
 
-          real_gateway.settle!("x-bsv-payment", payload, request, waiting_route)
+        real_gateway.settle!("x-bsv-payment", payload, request, route)
 
-          expect(arc_client).to have_received(:broadcast)
-            .with(an_instance_of(BSV::Transaction::Transaction), wait_for: "SEEN_ON_NETWORK")
-        end
-
-        it "settles successfully, consumes the prefix, and calls internalize_action" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_full_beef_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-
-          result = real_gateway.settle!("x-bsv-payment", payload, request, route)
-
-          expect(result).to be_a(X402::SettlementResult)
-          expect(prefix_store.valid?(prefix)).to be false
-          expect(wallet).to have_received(:internalize_action)
-        end
-
-        it "does NOT call arc_client.status" do
-          allow(arc_client).to receive(:status)
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_full_beef_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-
-          real_gateway.settle!("x-bsv-payment", payload, request, route)
-
-          expect(arc_client).not_to have_received(:status)
-        end
-
-        it "raises VerificationError(402) when ARC rejects the broadcast" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_full_beef_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:broadcast)
-            .and_raise(BSV::Network::BroadcastError.new("malformed tx", status_code: 400))
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError, /payment not accepted/) { |e| expect(e.status).to eq(402) }
-        end
-
-        it "raises VerificationError(402) when ARC rejects with no status_code" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_full_beef_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:broadcast).and_raise(BSV::Network::BroadcastError.new("unknown"))
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError, /payment not accepted/) { |e| expect(e.status).to eq(402) }
-        end
-
-        it "raises VerificationError(503) when ARC returns a 5xx" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_full_beef_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:broadcast)
-            .and_raise(BSV::Network::BroadcastError.new("boom", status_code: 500))
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError, /temporarily unavailable/) { |e| expect(e.status).to eq(503) }
-        end
-
-        it "raises VerificationError(503) on network error" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_full_beef_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:broadcast).and_raise(SocketError.new("network down"))
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError, /temporarily unavailable/) { |e| expect(e.status).to eq(503) }
-        end
-
-        # Critical for retry semantics: settlement runs BEFORE consume_prefix!,
-        # so a transient failure must leave the prefix available for a
-        # legitimate retry.
-        it "does NOT consume the prefix when broadcast fails" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_full_beef_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:broadcast).and_raise(BSV::Network::BroadcastError.new("unknown"))
-          allow(prefix_store).to receive(:consume!).and_call_original
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError)
-
-          expect(prefix_store).not_to have_received(:consume!)
-          expect(prefix_store.valid?(prefix)).to be true
-        end
-
-        it "does NOT call wallet.internalize_action when broadcast fails" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_full_beef_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:broadcast).and_raise(BSV::Network::BroadcastError.new("unknown"))
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError)
-
-          expect(wallet).not_to have_received(:internalize_action)
-        end
+        expect(arc_client).to have_received(:status).with(transaction.txid_hex)
       end
 
-      # --- Atomic BEEF (vendor verifies) ---
-      context "Atomic BEEF (vendor verifies)" do
-        it "calls arc_client.status with the subject txid" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+      it "settles successfully, consumes the prefix, and calls internalize_action" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
 
-          real_gateway.settle!("x-bsv-payment", payload, request, route)
+        result = real_gateway.settle!("x-bsv-payment", payload, request, route)
 
-          expect(arc_client).to have_received(:status).with(transaction.txid_hex)
-        end
-
-        it "settles successfully, consumes the prefix, and calls internalize_action" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-
-          result = real_gateway.settle!("x-bsv-payment", payload, request, route)
-
-          expect(result).to be_a(X402::SettlementResult)
-          expect(prefix_store.valid?(prefix)).to be false
-          expect(wallet).to have_received(:internalize_action)
-        end
-
-        it "does NOT call arc_client.broadcast" do
-          allow(arc_client).to receive(:broadcast)
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-
-          real_gateway.settle!("x-bsv-payment", payload, request, route)
-
-          expect(arc_client).not_to have_received(:broadcast)
-        end
-
-        it "does NOT pass wait_for (status takes txid only)" do
-          waiting_route = X402::Configuration::Route.new(
-            http_method: "GET", path: "/premium", amount_sats: 1000, arc_wait_for: "SEEN_ON_NETWORK"
-          )
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-
-          real_gateway.settle!("x-bsv-payment", payload, request, waiting_route)
-
-          expect(arc_client).to have_received(:status).with(transaction.txid_hex)
-        end
-
-        it "raises VerificationError(402) when ARC rejects the status check" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:status)
-            .and_raise(BSV::Network::BroadcastError.new("tx not found", status_code: 404))
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError, /payment not accepted/) { |e| expect(e.status).to eq(402) }
-        end
-
-        it "does NOT call wallet.internalize_action when status check is rejected" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:status)
-            .and_raise(BSV::Network::BroadcastError.new("tx not found", status_code: 404))
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError)
-
-          expect(wallet).not_to have_received(:internalize_action)
-        end
-
-        it "does NOT consume the prefix when status check fails" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:status)
-            .and_raise(BSV::Network::BroadcastError.new("tx not found", status_code: 404))
-          allow(prefix_store).to receive(:consume!).and_call_original
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError)
-
-          expect(prefix_store).not_to have_received(:consume!)
-          expect(prefix_store.valid?(prefix)).to be true
-        end
-
-        it "raises VerificationError(503) when ARC returns a 5xx" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:status)
-            .and_raise(BSV::Network::BroadcastError.new("boom", status_code: 500))
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError, /temporarily unavailable/) { |e| expect(e.status).to eq(503) }
-        end
-
-        it "raises VerificationError(503) on network error" do
-          transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
-          payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
-          allow(arc_client).to receive(:status).and_raise(SocketError.new("dns fail"))
-
-          expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
-            .to raise_error(X402::VerificationError, /temporarily unavailable/) { |e| expect(e.status).to eq(503) }
-        end
+        expect(result).to be_a(X402::SettlementResult)
+        expect(prefix_store.valid?(prefix)).to be false
+        expect(wallet).to have_received(:internalize_action)
       end
 
-      # --- arc_client nil ---
+      it "raises VerificationError(402) when tx is not on-chain" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+        allow(arc_client).to receive(:status)
+          .and_raise(BSV::Network::BroadcastError.new("tx not found", status_code: 404))
+
+        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /payment not accepted/) { |e| expect(e.status).to eq(402) }
+      end
+
+      it "does NOT consume the prefix when verification fails" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+        allow(arc_client).to receive(:status)
+          .and_raise(BSV::Network::BroadcastError.new("tx not found", status_code: 404))
+        allow(prefix_store).to receive(:consume!).and_call_original
+
+        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError)
+
+        expect(prefix_store).not_to have_received(:consume!)
+        expect(prefix_store.valid?(prefix)).to be true
+      end
+
+      it "does NOT call wallet.internalize_action when verification fails" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+        allow(arc_client).to receive(:status)
+          .and_raise(BSV::Network::BroadcastError.new("tx not found", status_code: 404))
+
+        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError)
+
+        expect(wallet).not_to have_received(:internalize_action)
+      end
+
+      it "raises VerificationError(503) when ARC returns a 5xx" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+        allow(arc_client).to receive(:status)
+          .and_raise(BSV::Network::BroadcastError.new("boom", status_code: 500))
+
+        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /temporarily unavailable/) { |e| expect(e.status).to eq(503) }
+      end
+
+      it "raises VerificationError(503) on network error" do
+        transaction = build_payment_tx(amount: 1000, script_hex: payment_script_hex)
+        payload = build_proof_payload(prefix: prefix, suffix: suffix, transaction: transaction)
+        allow(arc_client).to receive(:status).and_raise(SocketError.new("dns fail"))
+
+        expect { real_gateway.settle!("x-bsv-payment", payload, request, route) }
+          .to raise_error(X402::VerificationError, /temporarily unavailable/) { |e| expect(e.status).to eq(503) }
+      end
+
       context "when arc_client is nil" do
         it "raises a configuration error" do
           gateway_without_arc = described_class.new(
