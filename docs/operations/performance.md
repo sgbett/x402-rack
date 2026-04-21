@@ -30,9 +30,17 @@ Default: `SEEN_ON_NETWORK` with 5s timeout. Configurable per gateway.
 
 - **Challenge generation**: fast (no nonces, no signing)
 - **Settlement**: synchronous ARC broadcast — server holds connection open
-- **Bottleneck**: ARC round-trip on every request
+- **Bottleneck**: ARC round-trip (broadcast) on every request
 - **Scaling**: limited by ARC throughput per server instance
 - **Best for**: simple deployments, low-to-medium traffic, getting started
+
+### BRC121Gateway / BRC105Gateway
+
+- **Challenge generation**: fast (BRC-121: two headers; BRC-105: prefix + identity key)
+- **Settlement**: ARC status check (GET, not POST) — lighter than broadcast
+- **Bottleneck**: ARC round-trip (status query) on every request
+- **Scaling**: broadcast distributed to clients; server does a lightweight read
+- **Best for**: BRC-100 wallet ecosystems, spec-compliant deployments
 
 ### ProofGateway (BSV-proof)
 
@@ -42,13 +50,13 @@ Default: `SEEN_ON_NETWORK` with 5s timeout. Configurable per gateway.
 - **Scaling**: broadcast distributed to clients, server is passive observer
 - **Best for**: high traffic, enterprise deployments, horizontal scaling
 
-### Why ProofGateway Scales Better
+### Scaling Comparison
 
-In PayGateway, the server broadcasts every transaction — it's a relay. Under load, ARC connections stack up.
+In PayGateway, the server broadcasts every transaction (POST to ARC). Under load, ARC connections stack up.
 
-In ProofGateway, the client broadcasts and the server just confirms. The server's ARC interaction is a lightweight status query, not a synchronous broadcast. The heavy lifting (transaction construction, signing, broadcasting) is distributed across all clients.
+In BRC-121, BRC-105, and ProofGateway, the client broadcasts and the server verifies via a status query (GET from ARC). The server's ARC interaction is lighter — a read, not a write. The heavy lifting (transaction construction, signing, broadcasting) is distributed across all clients.
 
-The nonce provider can be horizontally scaled independently — it's just minting 1-sat UTXOs, which is fast and parallelisable.
+For ProofGateway specifically, the nonce provider can be horizontally scaled independently — it's just minting 1-sat UTXOs, which is fast and parallelisable.
 
 ## Mitigation Strategies
 
