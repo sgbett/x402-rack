@@ -80,7 +80,7 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
   let(:client_wallet) do
     wallet = BSV::Wallet::Client.new(
       client_key,
-      storage: BSV::Wallet::Store::Memory.new,
+      storage: BSV::Wallet::Store::File.new(dir: File.expand_path("../wallet", __dir__)),
       network: "testnet",
       chain_provider: chain_provider,
       broadcaster: broadcaster
@@ -97,7 +97,7 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
   let(:server_wallet) do
     BSV::Wallet::Client.new(
       server_key,
-      storage: BSV::Wallet::Store::Memory.new,
+      storage: BSV::Wallet::Store::File.new(dir: File.expand_path("../wallet", __dir__)),
       network: "testnet"
     )
   end

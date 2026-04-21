@@ -829,8 +829,8 @@ RSpec.describe X402::Configuration do
           .and_return(private_key)
         allow(BSV::Wallet::Client).to receive(:new)
           .and_return(wallet_client)
-        allow(BSV::Wallet::Store::Memory).to receive(:new)
-          .and_return(instance_double("BSV::Wallet::Store::Memory"))
+        allow(BSV::Wallet::Store::File).to receive(:new)
+          .and_return(instance_double("BSV::Wallet::Store::File"))
       end
 
       it "wires shared wallet into PayGateway" do
