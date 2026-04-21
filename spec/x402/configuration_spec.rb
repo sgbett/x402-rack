@@ -818,7 +818,7 @@ RSpec.describe X402::Configuration do
     context "server_wif shared wallet" do
       let(:private_key) { instance_double("BSV::Primitives::PrivateKey") }
       let(:key_deriver) { instance_double("BSV::Wallet::KeyDeriver") }
-      let(:proto_wallet) { instance_double("BSV::Wallet::ProtoWallet", key_deriver: key_deriver) }
+      let(:wallet_client) { instance_double("BSV::Wallet::Client", key_deriver: key_deriver) }
 
       before do
         config.payee_locking_script_hex = nil
@@ -827,9 +827,10 @@ RSpec.describe X402::Configuration do
         allow(BSV::Primitives::PrivateKey).to receive(:from_wif)
           .with("L1serverWif")
           .and_return(private_key)
-        allow(BSV::Wallet::ProtoWallet).to receive(:new)
-          .with(private_key)
-          .and_return(proto_wallet)
+        allow(BSV::Wallet::Client).to receive(:new)
+          .and_return(wallet_client)
+        allow(BSV::Wallet::Store::Memory).to receive(:new)
+          .and_return(instance_double("BSV::Wallet::Store::Memory"))
       end
 
       it "wires shared wallet into PayGateway" do
@@ -838,7 +839,7 @@ RSpec.describe X402::Configuration do
 
         gw = config.gateways.first
         expect(gw).to be_a(X402::BSV::PayGateway)
-        expect(gw.instance_variable_get(:@wallet)).to eq(proto_wallet)
+        expect(gw.instance_variable_get(:@wallet)).to eq(wallet_client)
       end
 
       it "does not wire shared wallet into ProofGateway" do
@@ -865,7 +866,7 @@ RSpec.describe X402::Configuration do
       end
 
       it "per-gateway wallet override takes precedence" do
-        custom_wallet = instance_double("BSV::Wallet::ProtoWallet")
+        custom_wallet = instance_double("BSV::Wallet::Client")
         config.enable :pay_gateway, wallet: custom_wallet
         config.validate!
 
@@ -885,7 +886,7 @@ RSpec.describe X402::Configuration do
         first = config.shared_wallet
         second = config.shared_wallet
         expect(first).to equal(second)
-        expect(BSV::Wallet::ProtoWallet).to have_received(:new).once
+        expect(BSV::Wallet::Client).to have_received(:new).once
       end
     end
 

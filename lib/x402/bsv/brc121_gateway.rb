@@ -55,7 +55,7 @@ module X402
     # and delayed replay.
     #
     # BRC-121 §5 step 5 also specifies checking +isMerge+ on the wallet's
-    # internalization result. The current Ruby +BSV::Wallet::WalletClient+
+    # internalization result. The current Ruby +BSV::Wallet::Client+
     # does not return an +isMerge+ field, so this gateway additionally uses
     # an +X402::BSV::TxidStore+ to reject duplicate txids within the freshness
     # window.
@@ -76,7 +76,7 @@ module X402
 
       # @param wallet [#internalize_action, #get_public_key] BRC-100 wallet.
       #   Must respond to +#internalize_action(args)+ (per
-      #   bsv-ruby-sdk +BSV::Wallet::WalletClient+) and
+      #   bsv-ruby-sdk +BSV::Wallet::Client+) and
       #   +#get_public_key(identity_key: true)+ for the server identity key.
       # @param txid_store [#record_if_unseen!, nil] replay protection for
       #   settled txids. Defaults to +X402::BSV::TxidStore::Memory.new+.
@@ -158,7 +158,7 @@ module X402
       private
 
       def server_identity_key
-        # Positional hash, not kwargs — WalletClient's signature is
+        # Positional hash, not kwargs — Client's signature is
         # (args, originator:) and Ruby 3.4 strict hash/kwargs separation
         # rejects the bare-kwargs form. Same idiom as status_endpoint.rb.
         result = @wallet.get_public_key({ identity_key: true })

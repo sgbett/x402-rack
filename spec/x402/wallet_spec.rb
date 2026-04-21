@@ -51,25 +51,25 @@ RSpec.describe X402::Wallet do
     end
 
     context "with only the on-disk wallet.key" do
-      it "returns a WalletClient built from the file" do
+      it "returns a Client built from the file" do
         File.write(key_path, "#{sample_wif}\n")
         wallet = described_class.load(dir: tmpdir)
 
         expected_key = BSV::Primitives::PrivateKey.from_wif(sample_wif).public_key.to_hex
-        expect(wallet).to be_a(BSV::Wallet::WalletClient)
+        expect(wallet).to be_a(BSV::Wallet::Client)
         expect(wallet.key_deriver.identity_key).to eq(expected_key)
       end
 
-      it "uses a FileStore pointed at the same directory" do
+      it "uses a Store::File pointed at the same directory" do
         File.write(key_path, sample_wif)
         wallet = described_class.load(dir: tmpdir)
-        expect(wallet.storage).to be_a(BSV::Wallet::FileStore)
+        expect(wallet.storage).to be_a(BSV::Wallet::Store::File)
         expect(wallet.storage.dir).to eq(tmpdir)
       end
     end
 
     context "with only SERVER_WIF (no file)" do
-      it "returns a WalletClient built from the env var" do
+      it "returns a Client built from the env var" do
         ENV["SERVER_WIF"] = sample_wif
         wallet = described_class.load(dir: tmpdir)
         expected_key = BSV::Primitives::PrivateKey.from_wif(sample_wif).public_key.to_hex

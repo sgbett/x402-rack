@@ -25,7 +25,7 @@ module X402
       # @param payee_locking_script_hex [String, nil] static payee script hex;
       #   falls back to X402.configuration.payee_locking_script_hex if nil.
       #   Ignored when wallet is provided (derived addresses used instead).
-      # @param wallet [BSV::Wallet::ProtoWallet, nil] wallet for key derivation.
+      # @param wallet [#get_public_key, nil] wallet for key derivation.
       #   When provided, each challenge gets a unique derived payee address.
       # @param challenge_secret [String, nil] HMAC secret for signing challenge data.
       #   Auto-generated if not provided. Used to verify payTo hasn't been tampered with.

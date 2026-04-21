@@ -78,9 +78,9 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
   # Client wallet: BRC-100 wallet with broadcaster (real ARC via spy) and
   # chain provider (for `sync_utxos` seeding).
   let(:client_wallet) do
-    wallet = BSV::Wallet::WalletClient.new(
+    wallet = BSV::Wallet::Client.new(
       client_key,
-      storage: BSV::Wallet::MemoryStore.new,
+      storage: BSV::Wallet::Store::Memory.new,
       network: "testnet",
       chain_provider: chain_provider,
       broadcaster: broadcaster
@@ -95,9 +95,9 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
   # Server wallet: BRC-100 wallet used by the gateway for identity lookup
   # and `internalize_action`. No broadcaster or chain provider needed.
   let(:server_wallet) do
-    BSV::Wallet::WalletClient.new(
+    BSV::Wallet::Client.new(
       server_key,
-      storage: BSV::Wallet::MemoryStore.new,
+      storage: BSV::Wallet::Store::Memory.new,
       network: "testnet"
     )
   end
