@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-04-21
+
+### Fixed
+
+- PayGateway broadcasts BEEF-extracted tx (with ancestry) instead of raw tx — fixes ARC rejection of `noSend` payments where parent UTXOs are only present in the BEEF (#186)
+- Diagnostic context added to all gateway error logging: txid, sender, BEEF type, ARC status/response on every failure path (#188)
+
 ## [0.11.1] - 2026-04-21
 
 ### Changed
