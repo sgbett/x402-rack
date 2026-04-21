@@ -2,16 +2,20 @@
 
 ## Core invariant
 
-> **x402-rack serves content if and only if the vendor has broadcast the payment transaction to the BSV network.**
+> **x402-rack serves content if and only if the payment transaction is confirmed on the BSV network.**
 
-This is the one job. `BRC121Gateway` and `BRC105Gateway` enforce it by broadcasting the client's signed BEEF to ARC themselves, after the payment output has been verified but **before** any wallet or replay state is mutated. ARC's idempotency means duplicate broadcasts (when the client has already broadcast) are safe — they return 2xx without duplicating work. `ProofGateway` keeps its original semantics (client broadcasts first, server reads ARC status via `arc_client.status(txid)`) because the scheme is explicitly proof-of-prior-payment.
+This is the one job. Each gateway enforces it according to its spec:
 
-Failures bifurcate cleanly in the HTTP response:
+- **PayGateway** broadcasts the tx to ARC itself (our protocol, our design).
+- **BRC121Gateway** and **BRC105Gateway** verify the client's broadcast via `arc_client.status(txid)` — per BRC-121 §5 and BRC-105 §6.3, the client broadcasts.
+- **ProofGateway** checks ARC status (client broadcasts first, per the merkleworks scheme).
 
-- **402** — ARC rejected the broadcast (malformed tx, insufficient funds, double-spend; client fault)
+All paths block the 200 until ARC confirms. Failures bifurcate cleanly:
+
+- **402** — tx not on-chain, rejected, or invalid (client fault)
 - **503** — ARC unreachable / 5xx / timeout (infrastructure fault)
 
-See [schemes/brc-121.md](schemes/brc-121.md#vendor-broadcast) and [schemes/brc-105.md](schemes/brc-105.md#vendor-broadcast) for the per-gateway specifics.
+See [schemes/brc-121.md](schemes/brc-121.md#on-chain-verification) and [schemes/brc-105.md](schemes/brc-105.md#on-chain-verification) for per-gateway specifics.
 
 ## Mental model: x402-rack is the checkout
 
@@ -48,26 +52,31 @@ The customer presents payment. The checkout processes it — settling on-chain a
 
 It explains the design decisions that otherwise look arbitrary:
 
-- **Why does the vendor broadcast?** Because the checkout takes the card and runs the transaction. It doesn't ask the customer to run a parallel transaction with the bank and present proof — it *is* the settlement point.
-- **Why is ARC idempotency the load-bearing property?** Because the card reader always dials the bank, even if you've already paid somewhere else with the same card today. The bank handles deduplication; the reader doesn't need to second-guess.
-- **Why no `verify_on_chain` kill-switch?** Because a till that lets you turn off "actually process the payment" isn't a till any more. The checkout either settles or refuses — there's no halfway.
+- **Why does PayGateway broadcast?** Because that's our protocol — the checkout takes the card and runs the transaction. BRC-121 and BRC-105 have the customer run the transaction first (the spec says so); the checkout just verifies it went through.
 - **Why does ARC failure return 503, not 402?** Because an unreachable bank is a shop problem, not a customer problem. The sign reads "TERMINAL DOWN — please try again", not "YOUR CARD IS DECLINED".
-- **Why must the `arc_client` be configured?** Because a checkout without a card reader isn't a checkout. The invariant cannot be enforced without the network-write primitive.
+- **Why must the `arc_client` be configured?** Because a checkout without a way to check the bank isn't a checkout. Whether we broadcast (PayGateway) or verify (BRC-121/BRC-105), the invariant cannot be enforced without ARC.
 
-### The pivot from 0.10.2 to 0.11.0
+### Settlement models
 
-This model also explains why 0.10.2 felt wrong. The status-check approach (0.10.2) was like a till that asks "did you pay the bank yet?" — making the customer do the transaction and then showing proof. The vendor-broadcast approach (0.11.0) is like a till that *takes* the card and *runs* the transaction. Cleaner, and matches what retailers actually do.
+Each gateway follows its spec's settlement model:
 
 ```
-0.10.2 (status-check — wrong):          0.11.0 (vendor-broadcast — right):
-─────────────────────────────          ──────────────────────────────────
-Customer: I paid, here's proof         Customer: here's my card
-Till:     let me check with the bank   Till:     thank you [dip, beep]
-Bank:     status: SEEN_ON_NETWORK      Bank:     approved
-Till:     proceed                      Till:     proceed
+PayGateway (our protocol — vendor broadcasts):
+──────────────────────────────────────────────
+Customer: here's my card
+Till:     thank you [dip, beep]
+Bank:     approved
+Till:     proceed
+
+BRC-121 / BRC-105 (client broadcasts per spec):
+────────────────────────────────────────────────
+Customer: I paid, here's proof
+Till:     let me check with the bank
+Bank:     status: SEEN_ON_NETWORK
+Till:     proceed
 ```
 
-Same outcome when everything works. Different failure modes:
+Same invariant (NO PAY → NO CONTENT). Different mechanics. Same failure modes:
 
 - Under 0.10.2, a customer who hadn't actually paid was rejected *after* the till spent an unpredictable amount of time polling the bank (propagation lag).
 - Under 0.11.0, the till just runs the transaction itself — either it succeeds (tx is on-chain) or ARC refuses it (genuine rejection with a clear reason). No polling window, no noSend corner case.

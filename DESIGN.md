@@ -10,16 +10,19 @@ The middleware is a pure dispatcher — no blockchain knowledge, no keys. Gatewa
 
 ## Settlement Schemes
 
-Three BSV payment schemes:
+Four BSV payment schemes:
 
 - **BSV-pay** — server broadcasts via ARC. Coinbase v2 headers. Minimal infrastructure.
   → [docs/schemes/bsv-pay.md](docs/schemes/bsv-pay.md)
 
-- **BSV-proof** — client broadcasts, server checks mempool. Merkleworks headers. Nonce-bound.
-  → [docs/schemes/bsv-proof.md](docs/schemes/bsv-proof.md)
+- **BRC-121** — client broadcasts, server verifies via ARC status. Stateless, zero-config. BSV Association spec.
+  → [docs/schemes/brc-121.md](docs/schemes/brc-121.md)
 
-- **BRC-105** — BRC-29 derived addresses, AtomicBEEF transactions. BSV Association headers. Optional BRC-103 auth.
+- **BRC-105** — client broadcasts, server verifies via ARC status. BRC-29 derived addresses, AtomicBEEF. Optional BRC-103 auth.
   → [docs/schemes/brc-105.md](docs/schemes/brc-105.md)
+
+- **BSV-proof** — client broadcasts, server checks mempool. Merkleworks headers. Nonce-bound. Experimental.
+  → [docs/schemes/bsv-proof.md](docs/schemes/bsv-proof.md)
 
 ## Security
 
@@ -48,5 +51,6 @@ bsv-x402, BRC-100/CWI, BSV Browser, retry logic, fee delegation.
 ## Process Flows
 
 - **PayGateway**: [docs/process-flow/pay-gateway.md](docs/process-flow/pay-gateway.md)
-- **ProofGateway**: [docs/process-flow/proof-gateway.md](docs/process-flow/proof-gateway.md)
+- **BRC121Gateway**: [docs/process-flow/brc121-gateway.md](docs/process-flow/brc121-gateway.md)
 - **BRC105Gateway**: [docs/process-flow/brc105-gateway.md](docs/process-flow/brc105-gateway.md)
+- **ProofGateway**: [docs/process-flow/proof-gateway.md](docs/process-flow/proof-gateway.md)

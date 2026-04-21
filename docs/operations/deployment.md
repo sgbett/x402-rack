@@ -40,7 +40,7 @@ arc = BSV::Network::ARC.new(
 
 ### ARC is a hard dependency
 
-`BRC121Gateway` and `BRC105Gateway` enforce the NO PAY → NO CONTENT invariant by broadcasting the client's signed BEEF to ARC themselves before mutating wallet state. `ProofGateway` reads ARC status (the scheme is explicitly proof-of-prior-payment). Either way, **ARC reachability is a hard runtime dependency on the critical path** — treat it with the same seriousness as your primary database. This was true before vendor-broadcast and it is even more true now: without a successful ARC broadcast there is literally no settlement.
+All gateways depend on ARC for NO PAY → NO CONTENT enforcement. `PayGateway` broadcasts via ARC. `BRC121Gateway` and `BRC105Gateway` verify the client's broadcast via `arc_client.status(txid)`. `ProofGateway` reads ARC status. **ARC reachability is a hard runtime dependency on the critical path** — treat it with the same seriousness as your primary database.
 
 Minimum monitoring:
 
