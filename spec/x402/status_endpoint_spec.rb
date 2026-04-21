@@ -22,7 +22,7 @@ RSpec.describe X402::StatusEndpoint do
   end
 
   # Builds a mock wallet that returns the given public key hex from
-  # get_public_key. Accepts a positional hash (ProtoWallet style).
+  # get_public_key. Accepts a positional hash (BRC-100 wallet style).
   def mock_wallet_returning(pubkey_hex)
     wallet = Object.new
     wallet.define_singleton_method(:get_public_key) { |_args| { public_key: pubkey_hex } }
@@ -73,7 +73,7 @@ RSpec.describe X402::StatusEndpoint do
   end
 
   describe "wallet-based identity resolution" do
-    context "with server_wif (ProtoWallet path)" do
+    context "with server_wif (Client path)" do
       before { configure_with }
 
       it "displays the correct public key and address" do
@@ -97,7 +97,7 @@ RSpec.describe X402::StatusEndpoint do
       end
     end
 
-    context "with explicit wallet (WalletClient mock)" do
+    context "with explicit wallet (Client mock)" do
       let(:wallet_mock) { mock_wallet_returning(test_pubkey_hex) }
 
       before { configure_with(wallet: wallet_mock) }

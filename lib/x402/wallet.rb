@@ -5,10 +5,10 @@ require "fileutils"
 module X402
   # Helpers for loading and persisting the server wallet key.
   #
-  # The gem uses +BSV::Wallet::WalletClient+ as the concrete BRC-100 wallet.
+  # The gem uses +BSV::Wallet::Client+ as the concrete BRC-100 wallet.
   # This module provides a loader that resolves the signing WIF from either
   # the +SERVER_WIF+ environment variable or an on-disk +wallet.key+ file,
-  # and constructs a +WalletClient+ with a +FileStore+ pointed at the same
+  # and constructs a +Client+ with a +Store::File+ pointed at the same
   # directory.
   #
   # See +lib/tasks/x402.rake+ for the interactive +rake x402:wallet:setup+
@@ -17,7 +17,7 @@ module X402
     DEFAULT_DIR = File.expand_path("~/.bsv-wallet")
     KEY_FILENAME = "wallet.key"
 
-    # Resolve the signing WIF and construct a +BSV::Wallet::WalletClient+.
+    # Resolve the signing WIF and construct a +BSV::Wallet::Client+.
     #
     # Resolution order (locked per HLR #104):
     #   1. +SERVER_WIF+ environment variable (wins if set)
@@ -27,7 +27,7 @@ module X402
     #
     # @param dir [String, nil] override the wallet directory (rarely needed
     #   — prefer +BSV_WALLET_DIR+ env var for process-wide config)
-    # @return [BSV::Wallet::WalletClient]
+    # @return [BSV::Wallet::Client]
     # @raise [ConfigurationError] if no WIF can be resolved
     def self.load(dir: nil)
       require "bsv-wallet"
@@ -35,8 +35,8 @@ module X402
       resolved_dir = dir || ENV.fetch("BSV_WALLET_DIR", DEFAULT_DIR)
       wif = resolve_wif(resolved_dir)
       key = ::BSV::Primitives::PrivateKey.from_wif(wif)
-      storage = ::BSV::Wallet::FileStore.new(dir: resolved_dir)
-      ::BSV::Wallet::WalletClient.new(key, storage: storage)
+      storage = ::BSV::Wallet::Store::File.new(dir: resolved_dir)
+      ::BSV::Wallet::Client.new(key, storage: storage)
     end
 
     # Returns the canonical path to the on-disk wallet key file for the

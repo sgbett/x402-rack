@@ -148,12 +148,12 @@ module X402
     #
     # Resolution order:
     #   1. An explicitly-set +@wallet+ (any BRC-100 compatible wallet,
-    #      typically a +BSV::Wallet::WalletClient+), or a +RemoteWallet+
+    #      typically a +BSV::Wallet::Client+), or a +RemoteWallet+
     #      auto-constructed from +operator_wallet_url+
-    #   2. A +ProtoWallet+ built from +server_wif+ (backwards compat)
+    #   2. A +Client+ built from +server_wif+ (backwards compat)
     #   3. +nil+ if neither is set
     #
-    # @return [BSV::Wallet::ProtoWallet, BSV::Wallet::WalletClient, RemoteWallet, nil]
+    # @return [BSV::Wallet::Client, RemoteWallet, nil]
     def shared_wallet
       return @wallet if @wallet
       return if @server_wif.nil? || @server_wif.empty?
@@ -415,7 +415,7 @@ module X402
 
     def build_wallet
       key = ::BSV::Primitives::PrivateKey.from_wif(@server_wif)
-      ::BSV::Wallet::ProtoWallet.new(key)
+      ::BSV::Wallet::Client.new(key, storage: ::BSV::Wallet::Store::Memory.new)
     end
 
     def build_gateways_from_specs!
