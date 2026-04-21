@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-04-21
+
+### Changed — Breaking
+
+- **BRC-121 and BRC-105: client broadcasts, server verifies.** `settle_payment!` (vendor-broadcast) replaced by `verify_on_chain!` — a single `arc_client.status(txid)` call. The client is responsible for broadcasting per BRC-121 §5 and BRC-105 §6.3. `BroadcastResponse` = on-chain → serve content. `BroadcastError` = NO PAY → 402. NO PAY → NO CONTENT invariant preserved. (#189)
+- `parse_beef_transaction` returns the subject transaction directly (was `[beef, subject_tx]` tuple)
+
+### Removed
+
+- Vendor-broadcast from BRC-121 and BRC-105 gateways (`arc_client.broadcast` calls)
+- BEEF-type detection (Full vs Atomic BEEF branching)
+- `find_atomic_transaction` ancestry wiring (only needed for broadcast)
+
 ## [0.11.2] - 2026-04-21
 
 ### Fixed
