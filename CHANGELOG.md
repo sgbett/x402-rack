@@ -5,12 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.11.1] - 2026-04-21
 
 ### Changed
 
 - **BEEF-type-aware settlement.** `BRC121Gateway` and `BRC105Gateway` now detect the BEEF type the client sends and respond accordingly. Full BEEF (`subject_txid` nil — client hasn't broadcast) triggers `arc.broadcast(subject_tx)`. Atomic BEEF (`subject_txid` set — client already broadcast) triggers `arc.status(txid)` to verify the tx is known to ARC. Both paths block the 200 until ARC confirms; both use the SDK's existing `BroadcastError` / `REJECTED_STATUSES` for error classification — no custom status whitelists. This replaces the unconditional broadcast that failed for Atomic BEEF (ARC rejects POST of Atomic BEEF even for known txids). (#180)
 - `parse_beef_transaction` now returns `[beef, subject_tx]` so `settle!` can inspect `beef.subject_txid` to choose the settlement path.
+- Bump bsv-sdk to 0.13.0, bsv-wallet to 0.10.0. Updates all class references (`WalletClient` → `Client`, `ProtoWallet` → removed, `FileStore` → `Store::File`). (#184)
+
+### Fixed
+
+- Use `find_atomic_transaction` to wire BEEF ancestry before broadcast (#177)
 
 ## [0.11.0] - 2026-04-16
 
