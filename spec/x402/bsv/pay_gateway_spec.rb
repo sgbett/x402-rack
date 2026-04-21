@@ -422,6 +422,72 @@ RSpec.describe X402::BSV::PayGateway do
         Base64.strict_encode64(JSON.generate(payload))
       end
 
+      it "broadcasts BEEF-extracted tx (with ancestry) when beef is present in payload" do
+        broadcast_tx = nil
+        mock_arc_spy = Object.new
+        mock_arc_spy.define_singleton_method(:broadcast) do |tx, **|
+          broadcast_tx = tx
+          Struct.new(:txid, :tx_status).new("cc" * 32, "SEEN_ON_NETWORK")
+        end
+
+        spy_gateway = described_class.new(
+          arc_client: mock_arc_spy,
+          wallet: mock_wallet,
+          binding_mode: :permissive
+        )
+
+        proof = wallet_proof(spy_gateway)
+        spy_gateway.settle!("Payment-Signature", proof, mock_request, route)
+
+        expect(broadcast_tx).not_to be_nil
+        # BEEF-extracted tx should have source transactions wired on inputs
+        expect(broadcast_tx).to be_a(BSV::Transaction::Transaction)
+      end
+
+      it "falls back to raw tx when beef is absent from payload" do
+        broadcast_tx = nil
+        mock_arc_spy = Object.new
+        mock_arc_spy.define_singleton_method(:broadcast) do |tx, **|
+          broadcast_tx = tx
+          Struct.new(:txid, :tx_status).new("cc" * 32, "SEEN_ON_NETWORK")
+        end
+
+        spy_gateway = described_class.new(
+          arc_client: mock_arc_spy,
+          wallet: mock_wallet,
+          binding_mode: :permissive
+        )
+
+        # Build proof WITHOUT beef field
+        headers = spy_gateway.challenge_headers(mock_request, route)
+        challenge = JSON.parse(Base64.strict_decode64(headers["Payment-Required"]))
+        accepted = challenge["accepts"].first
+        payee_script = BSV::Script::Script.from_hex(accepted["payTo"])
+
+        tx = BSV::Transaction::Transaction.new
+        tx.add_output(BSV::Transaction::TransactionOutput.new(satoshis: 100, locking_script: payee_script))
+        tx.add_input(BSV::Transaction::TransactionInput.new(
+                       prev_tx_id: ["dd" * 32].pack("H*"),
+                       prev_tx_out_index: 0,
+                       unlocking_script: BSV::Script::Script.new("\x00".b)
+                     ))
+
+        payload = {
+          "x402Version" => 2,
+          "accepted" => accepted,
+          "payload" => {
+            "rawtx" => tx.to_binary.unpack1("H*"),
+            "txid" => tx.txid_hex
+          }
+        }
+        proof = Base64.strict_encode64(JSON.generate(payload))
+
+        spy_gateway.settle!("Payment-Signature", proof, mock_request, route)
+
+        expect(broadcast_tx).not_to be_nil
+        expect(broadcast_tx.txid_hex).to eq(tx.txid_hex)
+      end
+
       it "calls wallet.internalize_action after broadcast when wallet is present" do
         called = false
         mock_wallet.define_singleton_method(:internalize_action) do |_args = {}|
