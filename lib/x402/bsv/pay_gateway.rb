@@ -80,7 +80,7 @@ module X402
         check_txid_unique!(transaction)
         verify_payment_output!(transaction, required_sats, accepted_payee)
         verify_binding!(transaction, rack_request)
-        settle_transaction!(transaction, route)
+        settle_transaction!(transaction, route, beef_b64)
         relay_to_wallet(transaction, prefix, suffix, beef_b64)
         build_settlement_result(transaction)
       end
@@ -192,17 +192,23 @@ module X402
 
       # Determine the effective wait_for strategy and either broadcast
       # synchronously or enqueue for async settlement.
-      def settle_transaction!(transaction, route)
+      #
+      # When +beef_b64+ is present, extracts the subject transaction from
+      # the BEEF bundle (with ancestry wired via +find_atomic_transaction+)
+      # so ARC can validate inputs for +noSend+ payments. Falls back to
+      # the raw parsed transaction when no BEEF is available.
+      def settle_transaction!(transaction, route, beef_b64 = nil)
         effective = (route.arc_wait_for || arc_wait_for).to_s
+        broadcast_tx = (beef_b64 && extract_broadcast_tx(beef_b64)) || transaction
 
         if effective == "async"
           unless settlement_worker
             raise ConfigurationError,
                   "route arc_wait_for is :async but no settlement_worker configured"
           end
-          settlement_worker.enqueue(transaction.to_binary)
+          settlement_worker.enqueue(broadcast_tx.to_binary)
         else
-          broadcast!(transaction, wait_for: effective)
+          broadcast!(broadcast_tx, wait_for: effective)
         end
       end
 
@@ -212,6 +218,19 @@ module X402
         raise
       rescue StandardError
         raise VerificationError.new("ARC broadcast failed", status: 502)
+      end
+
+      # Parse the BEEF bundle and extract the subject transaction with
+      # source transaction ancestry wired on each input. This ensures
+      # ARC can validate inputs even for noSend payments where the
+      # parent UTXOs aren't yet known to the network.
+      def extract_broadcast_tx(beef_b64)
+        raw = Base64.strict_decode64(beef_b64)
+        beef = ::BSV::Transaction::Beef.from_binary(raw)
+        txid = beef.subject_txid || beef.transactions.reverse_each.find(&:transaction)&.txid
+        beef.find_atomic_transaction(txid)
+      rescue StandardError
+        nil
       end
 
       # Relay the settled transaction to the operator's wallet for tracking.
