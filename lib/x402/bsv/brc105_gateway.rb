@@ -173,12 +173,19 @@ module X402
           @arc_client.broadcast(subject_tx, wait_for: route.arc_wait_for)
         end
       rescue ::BSV::Network::BroadcastError => e
+        txid = subject_tx.txid_hex
+        beef_type = beef.subject_txid ? "atomic" : "full"
         if e.status_code.is_a?(Integer) && e.status_code >= 500
+          logger.warn "[brc105] ARC outage: txid=#{txid} beef=#{beef_type} " \
+                      "status=#{e.status_code} message=#{e.message}"
           raise VerificationError.new("payment verification temporarily unavailable", status: 503)
         end
 
+        logger.info "[brc105] ARC rejected: txid=#{txid} beef=#{beef_type} " \
+                    "status=#{e.status_code.inspect} message=#{e.message}"
         raise VerificationError.new("payment not accepted: #{e.message}", status: 402)
-      rescue SocketError, Timeout::Error, Errno::ECONNREFUSED, Errno::ETIMEDOUT, Errno::EHOSTUNREACH
+      rescue SocketError, Timeout::Error, Errno::ECONNREFUSED, Errno::ETIMEDOUT, Errno::EHOSTUNREACH => e
+        logger.warn "[brc105] ARC network failure: txid=#{subject_tx.txid_hex} #{e.class}: #{e.message}"
         raise VerificationError.new("payment verification temporarily unavailable", status: 503)
       end
 
@@ -307,7 +314,8 @@ module X402
       rescue VerificationError
         raise
       rescue StandardError => e
-        logger.error "[brc105] internalize_action failed: #{e.class}: #{e.message}"
+        logger.error "[brc105] internalize_action failed: sender=#{sender_identity_key[0..15]}... " \
+                     "prefix=#{derivation_prefix} vout=#{output_index} #{e.class}: #{e.message}"
         raise VerificationError.new("payment internalisation failed", status: 402)
       end
 
