@@ -101,7 +101,7 @@ module X402
       # was constructed externally (e.g. RemoteWallet from operator_wallet_url).
       require "bsv-wallet"
 
-      # Positional hash, not kwargs — ProtoWallet's signature is
+      # Positional hash, not kwargs — Client's signature is
       # (args, originator:) and Ruby 3.4 strict separation breaks kwargs.
       result = wallet.get_public_key({ identity_key: true })
       hex = result.is_a?(Hash) ? (result[:public_key] || result["publicKey"]) : result

@@ -231,7 +231,7 @@ RSpec.describe X402::RemoteWallet do
       expect(captured_body["outputIndex"]).to eq(0)
     end
 
-    it "accepts a positional Hash (ProtoWallet convention)" do
+    it "accepts a positional Hash (BRC-100 wallet convention)" do
       result = wallet.internalize_action({
                                            tx: tx_bytes,
                                            outputs: [{

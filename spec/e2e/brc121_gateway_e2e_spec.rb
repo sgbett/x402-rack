@@ -78,9 +78,9 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
   # Client wallet: BRC-100 wallet with broadcaster (real ARC via spy) and
   # chain provider (for `sync_utxos` seeding).
   let(:client_wallet) do
-    wallet = BSV::Wallet::WalletClient.new(
+    wallet = BSV::Wallet::Client.new(
       client_key,
-      storage: BSV::Wallet::MemoryStore.new,
+      storage: BSV::Wallet::Store::Memory.new,
       network: "testnet",
       chain_provider: chain_provider,
       broadcaster: broadcaster
@@ -95,9 +95,9 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
   # Server wallet: BRC-100 wallet used by the gateway for identity lookup
   # and `internalize_action`. No broadcaster or chain provider needed.
   let(:server_wallet) do
-    BSV::Wallet::WalletClient.new(
+    BSV::Wallet::Client.new(
       server_key,
-      storage: BSV::Wallet::MemoryStore.new,
+      storage: BSV::Wallet::Store::Memory.new,
       network: "testnet"
     )
   end
@@ -350,8 +350,10 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       )
 
       # no_send: the client wallet builds the BEEF but its broadcaster is
-      # never invoked. Under 0.11.0+ vendor-broadcast, this is a
-      # supported flow — the server broadcasts for the client.
+      # never invoked. Under BEEF-type-aware settlement, a no_send client
+      # sends FULL BEEF (not Atomic) — the BEEF type IS the protocol
+      # signal: Full BEEF = "I haven't broadcast, you do it."
+      # See BEEF-SIGNALLING.md.
       E2ELogger.step(2, :client, "create_action(options: { no_send: true }) — construct BEEF, skip client broadcast")
 
       # The client-side broadcaster must stay untouched on this path.
@@ -372,13 +374,19 @@ RSpec.describe "BRC121Gateway e2e", :e2e do
       expect(result[:txid]).to match(/\A[0-9a-f]{64}\z/)
       expect(result[:tx]).to be_a(Array)
 
-      atomic_beef = atomic_beef_from_result(result)
-      beef_b64 = Base64.strict_encode64(atomic_beef)
+      # Send Full BEEF (not Atomic) — signals "I haven't broadcast".
+      # Full BEEF has subject_txid = nil, so the gateway takes the
+      # broadcast path (arc.broadcast) rather than the verify path
+      # (arc.status).
+      full_beef = result[:tx].pack("C*")
+      beef_b64 = Base64.strict_encode64(full_beef)
 
-      subject_tx = BSV::Transaction::Beef.from_binary(atomic_beef).find_transaction([result[:txid]].pack("H*"))
+      beef_obj = BSV::Transaction::Beef.from_binary(full_beef)
+      subject_tx = beef_obj.transactions.reverse.find(&:transaction)&.transaction
       vout = subject_tx.outputs.index { |o| o.satoshis == amount && o.locking_script.to_hex == payment_script.to_hex }
 
       E2ELogger.result("Txid", result[:txid])
+      E2ELogger.result("BEEF type", "Full BEEF (subject_txid nil — vendor broadcasts)")
       E2ELogger.result("Client broadcast", "SKIPPED (no_send)")
 
       E2ELogger.separator

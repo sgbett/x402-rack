@@ -8,7 +8,7 @@ module X402
   # HTTP client adapter implementing the duck-typed wallet interface by
   # calling a remote @bsv/simple server wallet API.
   #
-  # Provides the same interface as BSV::Wallet::WalletClient:
+  # Provides the same interface as BSV::Wallet::Client:
   #   - +#get_public_key(identity_key:)+ — fetches the identity key
   #   - +#get_public_key(protocol_id:, key_id:, ...)+ — derives a key
   #   - +#internalize_action(tx:, outputs:, description:)+ — relays payment
@@ -36,11 +36,11 @@ module X402
     # (cached after first call). Otherwise, delegates to the remote wallet
     # for BRC-42/43 key derivation.
     #
-    # Matches ProtoWallet interface: accepts a positional Hash of arguments.
+    # Matches BRC-100 wallet interface: accepts a positional Hash of arguments.
     # Also supports keyword arguments for convenience (used by tests and
     # direct callers).
     #
-    # @param args [Hash] arguments hash (ProtoWallet style)
+    # @param args [Hash] arguments hash (BRC-100 wallet style)
     # @return [Hash] +{ public_key: "hex" }+
     def get_public_key(args = {}, **kwargs)
       args = kwargs unless kwargs.empty?
@@ -53,10 +53,10 @@ module X402
 
     # Relay a settled payment to the remote wallet for internalisation.
     #
-    # Matches ProtoWallet interface: accepts a positional Hash of arguments.
+    # Matches BRC-100 wallet interface: accepts a positional Hash of arguments.
     # Also supports keyword arguments for convenience.
     #
-    # @param args [Hash] arguments hash (ProtoWallet style)
+    # @param args [Hash] arguments hash (BRC-100 wallet style)
     # @return [Hash] the wallet's response
     def internalize_action(args = {}, **kwargs)
       args = kwargs unless kwargs.empty?
