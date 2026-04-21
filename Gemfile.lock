@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    x402-rack (0.11.0)
+    x402-rack (0.11.1)
       base64 (~> 0.2)
       bsv-sdk (>= 0.12.1, < 1.0)
       bsv-wallet (>= 0.9.1, < 1.0)
