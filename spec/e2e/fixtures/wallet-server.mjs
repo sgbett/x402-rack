@@ -126,6 +126,43 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // Sweep all spendable outputs back to a given address.
+    // POST /api/server-wallet?action=sweep  body: { address: "..." }
+    if (req.method === 'POST' && action === 'sweep') {
+      try {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        const { address } = JSON.parse(body)
+        if (!address) return jsonResponse(res, 400, { error: 'address is required' })
+
+        // List spendable outputs to calculate total
+        const { outputs } = await client.listOutputs({ basket: 'default', include: 'locking scripts' })
+        const total = outputs.reduce((sum, o) => sum + o.satoshis, 0)
+        if (total === 0) return jsonResponse(res, 200, { swept: 0, txid: null })
+
+        // Leave room for fee
+        const fee = 200
+        const sendAmount = total - fee
+        if (sendAmount <= 0) return jsonResponse(res, 200, { swept: 0, txid: null })
+
+        // Import the SDK for Script
+        const { Script } = await import('@bsv/sdk')
+        const result = await client.createAction({
+          description: 'Sweep funds back to test client',
+          outputs: [{
+            satoshis: sendAmount,
+            lockingScript: Script.fromAddress(address).toHex(),
+            outputDescription: 'sweep refund'
+          }]
+        })
+
+        return jsonResponse(res, 200, { swept: sendAmount, txid: result.txid })
+      } catch (err) {
+        console.error('sweep error:', err.message)
+        return jsonResponse(res, 500, { error: `sweep failed: ${err.message}` })
+      }
+    }
+
     // Delegate everything else to @bsv/simple handler
     let body = ''
     if (req.method === 'POST') {

@@ -71,6 +71,28 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
   after(:all) do
     E2EHelper.stop_server(@rack_server, @rack_thread)
 
+    # Sweep wallet funds back to client before shutting down
+    if @wallet_port && ENV["CLIENT_WIF"]
+      begin
+        client_key = BSV::Primitives::PrivateKey.from_wif(ENV["CLIENT_WIF"])
+        client_address = client_key.public_key.address(network: :testnet)
+
+        uri = URI("http://localhost:#{@wallet_port}/api/server-wallet?action=sweep")
+        http = Net::HTTP.new(uri.host, uri.port)
+        req = Net::HTTP::Post.new(uri)
+        req["Content-Type"] = "application/json"
+        req.body = JSON.generate({ address: client_address })
+
+        response = http.request(req)
+        result = JSON.parse(response.body)
+        if result["swept"].to_i > 0
+          puts "\n  Swept #{result["swept"]} sats back to #{client_address} (txid: #{result["txid"]})"
+        end
+      rescue StandardError => e
+        puts "\n  Sweep failed (non-fatal): #{e.message}"
+      end
+    end
+
     if @wallet_pid
       begin
         Process.kill("TERM", @wallet_pid)
@@ -98,7 +120,7 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
       accept = challenge["accepts"].first
       expect(accept["network"]).to eq("bsv:testnet")
       expect(accept["asset"]).to eq("BSV")
-      expect(accept["amount"]).to eq("100")
+      expect(accept["amount"]).to eq("2000")
       expect(accept.dig("extra", "derivationPrefix")).not_to be_empty
       expect(accept.dig("extra", "derivationSuffix")).not_to be_empty
     end

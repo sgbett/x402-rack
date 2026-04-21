@@ -24,7 +24,7 @@ X402.configure do |config|
   config.arc_url = ENV.fetch("ARC_URL", nil)
   config.arc_api_key = ENV.fetch("ARC_API_KEY", nil)
 
-  config.protect method: "GET", path: "/protected", amount_sats: 100
+  config.protect method: "GET", path: "/protected", amount_sats: 2000
 end
 
 app = lambda do |env|
