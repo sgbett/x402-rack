@@ -6,32 +6,20 @@ The middleware is a pure dispatcher — it matches routes, issues payment challe
 
 ## What x402-rack guarantees
 
-> **x402-rack serves content if and only if the vendor has broadcast the payment transaction to the BSV network.**
+> **NO PAY → NO CONTENT: x402-rack serves content if and only if the payment transaction is confirmed on the BSV network.**
 
-That is the whole job. `BRC121Gateway` and `BRC105Gateway` broadcast the client's signed BEEF to ARC themselves, after the payment output has been verified but **before** any wallet or replay state is mutated. The broadcast is idempotent — a client that already broadcast is fine; ARC treats the duplicate as a no-op. This matches BSV's native commerce model: the vendor is the settlement point.
+That is the whole job. Each gateway enforces it according to its spec:
 
-`ProofGateway` keeps its original semantics (client broadcasts first, server reads ARC status) because the scheme is explicitly proof-of-prior-payment. Every other gateway broadcasts.
+- **PayGateway** (our Coinbase v2 protocol) broadcasts via ARC — vendor-broadcast is our design choice.
+- **BRC121Gateway** and **BRC105Gateway** verify the client's broadcast via `arc_client.status(txid)` — per BRC-121 §5 and BRC-105 §6.3, the client broadcasts.
+- **ProofGateway** checks ARC status — client broadcasts first (the merkleworks scheme demands it).
 
-Two failure modes are distinguished in the HTTP response:
+All paths block the 200 until ARC confirms. Two failure modes are distinguished:
 
-- **`402 Payment Required`** — ARC rejected the broadcast (malformed tx, insufficient funds, double-spend). This is a client fault.
-- **`503 Service Unavailable`** — ARC is unreachable, timing out, or returning 5xx. This is an infrastructure fault; the payment may be legitimate but cannot be settled.
+- **`402 Payment Required`** — tx not on-chain, rejected, or invalid. Client fault.
+- **`503 Service Unavailable`** — ARC is unreachable, timing out, or returning 5xx. Infrastructure fault; the payment may be legitimate but cannot be verified.
 
-**ARC is a hard runtime dependency in the critical path.** Operators should monitor ARC reachability and latency the same way they monitor their own database. If ARC is down, x402-rack cannot settle payments — no broadcast, no content. There is no kill-switch: vendor-broadcast is not optional, because without it there is no meaningful enforcement. For dev/staging flows, mock the gateway or avoid enabling payment middleware on un-gated routes.
-
-## Mental model: x402-rack is the checkout
-
-```
-Customer        →   x402-rack (checkout)   →   Vendor (the app)
-                    ├─ verify tx pays right
-                    ├─ broadcast to ARC      ← cash register ding
-                    ├─ record in wallet      ← till drawer closes
-                    └─ return 200            → vendor serves content
-```
-
-x402-rack is the point-of-sale terminal sitting between the customer and the merchant's backend. The customer presents a signed transaction, the checkout settles it on-chain, and only then does the vendor's app deliver the goods. Same role a card reader plays at a physical till.
-
-This framing explains the design directly: vendor-broadcast is "the card reader dials the bank", 503 is "TERMINAL DOWN", 402 is "CARD DECLINED", no kill-switch means a till that can't refuse to process payments isn't a till. See [docs/architecture.md](docs/architecture.md#mental-model-x402-rack-is-the-checkout) for the full mapping.
+**ARC is a hard runtime dependency in the critical path.** Operators should monitor ARC reachability and latency the same way they monitor their own database. If ARC is down, x402-rack cannot verify payments — no confirmation, no content. There is no kill-switch. For dev/staging flows, mock the gateway or avoid enabling payment middleware on un-gated routes.
 
 ## Installation
 
