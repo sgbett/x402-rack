@@ -168,6 +168,9 @@ module X402
         end
         return if found
 
+        actual = transaction.outputs.map { |o| "#{o.satoshis} sats → #{o.locking_script.to_hex[0..15]}..." }
+        logger.info "[pay-gateway] Payment output mismatch: txid=#{transaction.txid_hex} " \
+                    "required=#{required_sats} payee=#{payee_hex[0..15]}... outputs=[#{actual.join(", ")}]"
         raise VerificationError.new("no output pays >= #{required_sats} sats to payee", status: 402)
       end
 
@@ -175,6 +178,7 @@ module X402
         return unless @txid_store
         return if @txid_store.record_if_unseen!(transaction.txid_hex)
 
+        logger.info "[pay-gateway] Duplicate txid rejected: #{transaction.txid_hex}"
         raise VerificationError.new("transaction already settled", status: 400)
       end
 
@@ -187,6 +191,8 @@ module X402
         return if found
         return if binding_mode == :permissive
 
+        logger.info "[pay-gateway] OP_RETURN binding mismatch: txid=#{transaction.txid_hex} " \
+                    "request=#{rack_request.request_method} #{rack_request.path_info}"
         raise VerificationError.new("OP_RETURN request binding mismatch", status: 400)
       end
 
@@ -216,7 +222,13 @@ module X402
         arc_client.broadcast(transaction, wait_for: wait_for)
       rescue VerificationError
         raise
-      rescue StandardError
+      rescue ::BSV::Network::BroadcastError => e
+        logger.warn "[pay-gateway] ARC rejected broadcast: txid=#{transaction.txid_hex} " \
+                    "status=#{e.status_code.inspect} message=#{e.message}"
+        raise VerificationError.new("ARC broadcast failed: #{e.message}", status: 502)
+      rescue StandardError => e
+        logger.error "[pay-gateway] ARC broadcast error: txid=#{transaction.txid_hex} " \
+                     "#{e.class}: #{e.message}"
         raise VerificationError.new("ARC broadcast failed", status: 502)
       end
 

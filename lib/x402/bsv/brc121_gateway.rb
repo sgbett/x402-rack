@@ -290,22 +290,32 @@ module X402
           @arc_client.broadcast(subject_tx, wait_for: route.arc_wait_for)
         end
       rescue ::BSV::Network::BroadcastError => e
+        txid = subject_tx.txid_hex
+        beef_type = beef.subject_txid ? "atomic" : "full"
         if e.status_code.is_a?(Integer) && e.status_code >= 500
-          logger.warn "[brc121] ARC outage: #{e.message} (status=#{e.status_code})"
+          logger.warn "[brc121] ARC outage: txid=#{txid} beef=#{beef_type} " \
+                      "status=#{e.status_code} message=#{e.message}"
           raise VerificationError.new("payment verification temporarily unavailable", status: 503)
         end
 
-        logger.info "[brc121] ARC rejected: #{e.message} (status=#{e.status_code.inspect})"
+        logger.info "[brc121] ARC rejected: txid=#{txid} beef=#{beef_type} " \
+                    "status=#{e.status_code.inspect} message=#{e.message}"
         raise VerificationError.new("payment not accepted: #{e.message}", status: 402)
       rescue SocketError, Timeout::Error, Errno::ECONNREFUSED, Errno::ETIMEDOUT, Errno::EHOSTUNREACH => e
-        logger.warn "[brc121] ARC network failure: #{e.class}: #{e.message}"
+        logger.warn "[brc121] ARC network failure: txid=#{subject_tx.txid_hex} #{e.class}: #{e.message}"
         raise VerificationError.new("payment verification temporarily unavailable", status: 503)
       end
 
       def verify_payment_output!(transaction, output_index, required_sats)
         output = transaction.outputs[output_index]
-        raise VerificationError.new("output index #{output_index} out of range", status: 400) unless output
+        unless output
+          logger.info "[brc121] Output index out of range: txid=#{transaction.txid_hex} " \
+                      "vout=#{output_index} num_outputs=#{transaction.outputs.length}"
+          raise VerificationError.new("output index #{output_index} out of range", status: 400)
+        end
         if output.satoshis < required_sats
+          logger.info "[brc121] Insufficient payment: txid=#{transaction.txid_hex} " \
+                      "vout=#{output_index} got=#{output.satoshis} required=#{required_sats}"
           raise VerificationError.new("insufficient payment: #{output.satoshis} < #{required_sats}",
                                       status: 402)
         end
@@ -334,7 +344,8 @@ module X402
         # Log the full error server-side; return a generic message to the
         # client to avoid leaking wallet internals (paths, key derivation
         # state, storage errors) in the HTTP response body.
-        logger.error "[brc121] internalize_action failed: #{e.class}: #{e.message}"
+        logger.error "[brc121] internalize_action failed: sender=#{sender_identity_key[0..15]}... " \
+                     "prefix=#{derivation_prefix} vout=#{output_index} #{e.class}: #{e.message}"
         raise VerificationError.new("payment internalisation failed", status: 402)
       end
 
