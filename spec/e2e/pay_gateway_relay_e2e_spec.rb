@@ -66,27 +66,41 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
       config_ru: File.expand_path("relay_config.ru", __dir__),
       port: 9495
     )
+
+    # Initialise the BRC-100 client wallet — used by all payment tests.
+    # sync_utxos discovers on-chain UTXOs at the root address.
+    if ENV["CLIENT_WIF"]
+      require "bsv-wallet"
+      client_key = BSV::Primitives::PrivateKey.from_wif(ENV["CLIENT_WIF"])
+      wallet_dir = File.expand_path("../wallet", __dir__)
+      @client_wallet = BSV::Wallet::Client.new(
+        client_key,
+        storage: BSV::Wallet::Store::File.new(dir: wallet_dir),
+        network: "testnet",
+        broadcaster: BSV::Network::ARC.default(testnet: true)
+      )
+      imported = @client_wallet.sync_utxos
+      @client_address = client_key.public_key.address(network: :testnet)
+      puts "  Client wallet: #{@client_address} (#{@client_wallet.balance} sats, #{imported} UTXOs imported)"
+    end
   end
 
   after(:all) do
     E2EHelper.stop_server(@rack_server, @rack_thread)
 
     # Sweep wallet funds back to client before shutting down
-    if @wallet_port && ENV["CLIENT_WIF"]
+    if @wallet_port && @client_address
       begin
-        client_key = BSV::Primitives::PrivateKey.from_wif(ENV["CLIENT_WIF"])
-        client_address = client_key.public_key.address(network: :testnet)
-
         uri = URI("http://localhost:#{@wallet_port}/api/server-wallet?action=sweep")
         http = Net::HTTP.new(uri.host, uri.port)
         req = Net::HTTP::Post.new(uri)
         req["Content-Type"] = "application/json"
-        req.body = JSON.generate({ address: client_address })
+        req.body = JSON.generate({ address: @client_address })
 
         response = http.request(req)
         result = JSON.parse(response.body)
         if result["swept"].to_i > 0
-          puts "\n  Swept #{result["swept"]} sats back to #{client_address} (txid: #{result["txid"]})"
+          puts "\n  Swept #{result["swept"]} sats back to #{@client_address} (txid: #{result["txid"]})"
         end
       rescue StandardError => e
         puts "\n  Sweep failed (non-fatal): #{e.message}"
@@ -103,6 +117,48 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
     end
   ensure
     X402.reset_configuration!
+  end
+
+  # Build a payment for the given challenge using the BRC-100 client wallet.
+  # Uses createAction to construct and broadcast the tx, then wraps the
+  # result in a Payment-Signature header.
+  def build_payment(challenge)
+    accept = challenge["accepts"].first
+    amount = accept["amount"].to_i
+    payee_hex = accept["payTo"]
+
+    result = @client_wallet.create_action({
+                                            description: "e2e relay payment",
+                                            outputs: [{
+                                              satoshis: amount,
+                                              locking_script: payee_hex,
+                                              output_description: "payment"
+                                            }],
+                                            options: { randomize_outputs: false }
+                                          })
+
+    # createAction returns tx as AtomicBEEF (number[])
+    tx_bytes = result[:tx] || result["tx"]
+    txid = result[:txid] || result["txid"]
+    beef_b64 = Base64.strict_encode64(tx_bytes.pack("C*"))
+
+    # Extract raw tx from the BEEF for the rawtx field
+    beef = BSV::Transaction::Beef.from_binary(tx_bytes.pack("C*"))
+    subject_txid = beef.subject_txid || beef.transactions.reverse_each.find(&:transaction)&.txid
+    subject_tx = beef.find_transaction(subject_txid)
+    rawtx_hex = subject_tx.to_binary.unpack1("H*")
+
+    payload = {
+      "x402Version" => 2,
+      "accepted" => accept,
+      "payload" => {
+        "rawtx" => rawtx_hex,
+        "txid" => txid,
+        "beef" => beef_b64
+      }
+    }
+
+    Base64.strict_encode64(JSON.generate(payload))
   end
 
   describe "challenge" do
@@ -127,14 +183,15 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
   end
 
   describe "full payment flow" do
-    before { skip "CLIENT_WIF required" unless ENV["CLIENT_WIF"] }
+    before do
+      skip "CLIENT_WIF required" unless ENV["CLIENT_WIF"]
+      skip "Client wallet has no funds" unless @client_wallet&.balance&.positive?
+    end
 
     it "returns 200 after valid payment" do
       log_path = E2ELogger.start_log("pay-gateway-relay-e2e")
       E2ELogger.header("PayGateway Relay Mode — BSV Testnet E2E")
-
-      client_key = BSV::Primitives::PrivateKey.from_wif(ENV.fetch("CLIENT_WIF"))
-      E2ELogger.wallets(client_addr: client_key.public_key.address(network: :testnet))
+      E2ELogger.wallets(client_addr: @client_address)
       E2ELogger.separator
 
       # Step 1: Request protected resource
@@ -154,38 +211,15 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
       E2ELogger.result("derivationSuffix", accept.dig("extra", "derivationSuffix"))
       E2ELogger.separator
 
-      # Step 2: Build payment transaction
-      E2ELogger.step(2, :client, "Build payment transaction")
-
-      amount = accept["amount"].to_i
-      if accept.dig("extra", "partialTx")
-        template_binary = Base64.strict_decode64(accept["extra"]["partialTx"])
-        transaction = BSV::Transaction::Transaction.from_binary(template_binary)
-        E2ELogger.result("Source", "Extended extra.partialTx template")
-      else
-        payee_script = BSV::Script::Script.from_hex(accept["payTo"])
-        transaction = BSV::Transaction::Transaction.new
-        transaction.add_output(BSV::Transaction::TransactionOutput.new(
-                                 satoshis: amount,
-                                 locking_script: payee_script
-                               ))
-        E2ELogger.result("Source", "Built from payTo + amount")
-      end
-
-      provider = BSV::Network::WhatsOnChain.new(network: :testnet)
-      wallet = BSV::Wallet::Wallet.new(private_key: client_key, provider: provider)
-      wallet.fund_and_sign(transaction, network: :testnet)
-
-      E2ELogger.result("Inputs", transaction.inputs.size.to_s)
-      E2ELogger.result("Outputs", transaction.outputs.size.to_s)
+      # Step 2: Build payment via BRC-100 wallet
+      E2ELogger.step(2, :client, "Build payment via createAction")
+      payment_header = build_payment(challenge)
+      E2ELogger.result("Payment-Signature", "#{payment_header[0..40]}...")
       E2ELogger.separator
 
       # Step 3: Submit payment
       E2ELogger.step(3, :client, "Submit payment")
-      payment_header = E2EHelper.build_payment_signature(challenge, transaction)
-
       E2ELogger.arrow(:client, :server, "GET /protected")
-      E2ELogger.result("Payment-Signature", "#{payment_header[0..40]}...")
 
       http = Net::HTTP.new(uri.host, uri.port)
       request = Net::HTTP::Get.new(uri)
@@ -241,29 +275,9 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
       uri = URI("#{base_url}/protected")
       challenge_response = Net::HTTP.get_response(uri)
       challenge = E2EHelper.parse_challenge(challenge_response)
-      accept = challenge["accepts"].first
 
-      # Build and submit payment
-      client_key = BSV::Primitives::PrivateKey.from_wif(ENV.fetch("CLIENT_WIF"))
-      amount = accept["amount"].to_i
-
-      if accept.dig("extra", "partialTx")
-        template_binary = Base64.strict_decode64(accept["extra"]["partialTx"])
-        transaction = BSV::Transaction::Transaction.from_binary(template_binary)
-      else
-        payee_script = BSV::Script::Script.from_hex(accept["payTo"])
-        transaction = BSV::Transaction::Transaction.new
-        transaction.add_output(BSV::Transaction::TransactionOutput.new(
-                                 satoshis: amount,
-                                 locking_script: payee_script
-                               ))
-      end
-
-      provider = BSV::Network::WhatsOnChain.new(network: :testnet)
-      wallet = BSV::Wallet::Wallet.new(private_key: client_key, provider: provider)
-      wallet.fund_and_sign(transaction, network: :testnet)
-
-      payment_header = E2EHelper.build_payment_signature(challenge, transaction)
+      # Build and submit payment via BRC-100 wallet
+      payment_header = build_payment(challenge)
       http = Net::HTTP.new(uri.host, uri.port)
       request = Net::HTTP::Get.new(uri)
       request["Payment-Signature"] = payment_header
