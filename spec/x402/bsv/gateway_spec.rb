@@ -116,7 +116,8 @@ RSpec.describe X402::BSV::Gateway do
     context "with wallet" do
       let(:wallet) do
         require "bsv-wallet"
-        BSV::Wallet::Client.new(BSV::Primitives::PrivateKey.generate, storage: BSV::Wallet::Store::Memory.new)
+        BSV::Wallet::Client.new(BSV::Primitives::PrivateKey.generate,
+                                storage: BSV::Wallet::Store::File.new(dir: File.expand_path("../../wallet", __dir__)))
       end
       let(:wallet_gw) { described_class.new(wallet: wallet) }
 

@@ -12,6 +12,7 @@
 .env
 .mcp.json
 spec/e2e/logs/
+spec/wallet/
 *.gem
 docs/reference/
 site/

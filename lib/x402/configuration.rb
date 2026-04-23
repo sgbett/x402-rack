@@ -415,7 +415,7 @@ module X402
 
     def build_wallet
       key = ::BSV::Primitives::PrivateKey.from_wif(@server_wif)
-      ::BSV::Wallet::Client.new(key, storage: ::BSV::Wallet::Store::Memory.new)
+      ::BSV::Wallet::Client.new(key, storage: ::BSV::Wallet::Store::File.new)
     end
 
     def build_gateways_from_specs!
