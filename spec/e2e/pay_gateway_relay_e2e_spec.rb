@@ -77,7 +77,8 @@ RSpec.describe "PayGateway relay mode (e2e)", :e2e do
         client_key,
         storage: BSV::Wallet::Store::File.new(dir: wallet_dir),
         network: "testnet",
-        broadcaster: BSV::Network::ARC.default(testnet: true)
+        broadcaster: BSV::Network::ARC.default(testnet: true),
+        chain_data_source: BSV::Network::WhatsOnChain.new(network: :testnet)
       )
       imported = @client_wallet.sync_utxos
       @client_address = client_key.public_key.address(network: :testnet)

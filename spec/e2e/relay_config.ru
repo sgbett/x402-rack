@@ -24,6 +24,7 @@ X402.configure do |config|
   config.arc_url = ENV.fetch("ARC_URL", nil)
   config.arc_api_key = ENV.fetch("ARC_API_KEY", nil)
 
+  config.enable :pay_gateway, binding_mode: :permissive
   config.protect method: "GET", path: "/protected", amount_sats: 2000
 end
 
