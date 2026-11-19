@@ -14,6 +14,14 @@ Each gateway implements its spec's settlement model:
 - **BRC105Gateway** (BRC-105 spec): the client broadcasts (§6.3). The server verifies via `arc_client.status(txid)`, then calls `internalizeAction`. `BroadcastError` = NO PAY.
 - **ProofGateway** (merkleworks): the client broadcasts. The server checks mempool status via ARC.
 
+## Git
+
+Git tier: collaborative
+
+Git rules: `.claude/rules/git-workflow.md`, vendored from sgbett/dotfiles-claude; this repository's differences are below.
+
+- Releases: the version bump lands by PR and the tag is pushed after the merge; `/release` runs in two parts, the first opening the release PR and the second, once it is merged, tagging the merge commit and publishing.
+
 ## Commands
 
 ```bash
